@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oncology Patient Coordination & Monitoring System | Dashboard</title>
+    <meta name="description" content="Advanced platform to monitor and track oncology patient coordinates and referrals, directly synced with OneDrive Excel files.">
+    <!-- Google Fonts: Outfit for English/UI, Tajawal for Arabic -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom Style System -->
+    <link rel="stylesheet" href="styles.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- SheetJS for client-side Excel parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <i class="fa-solid fa-laptop-medical brand-icon"></i>
+                <div class="brand-text">
+                    <h2>Oncology</h2>
+                    <p>OncoCoord v3</p>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="overview" id="nav-overview">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <span>Overview</span>
+                </button>
+                <button class="nav-item" data-tab="master" id="nav-master">
+                    <i class="fa-solid fa-users-viewfinder"></i>
+                    <span>Master Registry</span>
+                </button>
+                <button class="nav-item" data-tab="followup" id="nav-followup">
+                    <i class="fa-solid fa-hourglass-half"></i>
+                    <span>Pending Follow-ups</span>
+                    <span class="badge badge-amber" id="badge-followup">0</span>
+                </button>
+                <button class="nav-item" data-tab="ncm" id="nav-ncm">
+                    <i class="fa-solid fa-user-doctor"></i>
+                    <span>New Cases Meeting</span>
+                    <span class="badge badge-indigo" id="badge-ncm">0</span>
+                </button>
+                <button class="nav-item" data-tab="inpatient" id="nav-inpatient">
+                    <i class="fa-solid fa-bed"></i>
+                    <span>Inpatients</span>
+                </button>
+                <button class="nav-item" data-tab="outpatient" id="nav-outpatient">
+                    <i class="fa-solid fa-house-medical-flag"></i>
+                    <span>Outpatients</span>
+                </button>
+                <button class="nav-item" data-tab="barriers" id="nav-barriers">
+                    <i class="fa-solid fa-circle-exclamation"></i>
+                    <span>Barriers & Issues</span>
+                    <span class="badge badge-danger" id="badge-barriers">0</span>
+                </button>
+                <button class="nav-item" data-tab="analytics" id="nav-analytics">
+                    <i class="fa-solid fa-microscope"></i>
+                    <span>Smart Analytics</span>
+                    <span class="badge badge-danger" id="badge-analytics">0</span>
+                </button>
+                <button class="nav-item" data-tab="settings" id="nav-settings">
+                    <i class="fa-solid fa-gear"></i>
+                    <span>Sync Settings</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="theme-toggle-container">
+                    <span class="theme-label">Dark Mode</span>
+                    <button class="theme-toggle" id="theme-toggle-btn" aria-label="Toggle Theme">
+                        <i class="fa-solid fa-moon"></i>
+                    </button>
+                </div>
+                <div class="user-profile">
+                    <div class="avatar"><i class="fa-solid fa-user-tie"></i></div>
+                    <div class="user-info">
+                        <h4>Data Coordinator</h4>
+                        <p>System Admin</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace Area -->
+        <main class="main-content">
+            <!-- Header Section -->
+            <header class="header">
+                <div class="header-title">
+                    <h1 id="page-main-heading">Oncology Patient Coordination Dashboard</h1>
+                    <p class="subtitle" id="system-status-msg">Last Updated: <span id="last-sync-time">Loading...</span></p>
+                </div>
+                <div class="header-actions">
+                    <label for="excel-file-upload" class="btn btn-primary sync-btn" style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-file-excel"></i>
+                        <span>Upload Excel Tracker</span>
+                    </label>
+                    <input type="file" id="excel-file-upload" accept=".xlsx" style="display: none;">
+                </div>
+            </header>
+
+            <!-- Loading overlay during sync -->
+            <div id="sync-loading-overlay" class="loading-overlay hidden">
+                <div class="loader-card">
+                    <div class="spinner"></div>
+                    <h3>Processing and updating data from Excel file...</h3>
+                    <p>This process may take a few seconds to read the local spreadsheet and analyze the sheets.</p>
+                    <div class="progress-steps">
+                        <div class="step active" id="step-connect"><i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file</div>
+                        <div class="step" id="step-download"><i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS</div>
+                        <div class="step" id="step-parse"><i class="fa-solid fa-circle"></i> Calculating metrics and drawing dashboard</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Drag-and-drop or Initial Load Overlay -->
+            <div id="initial-load-overlay" class="loading-overlay hidden">
+                <div class="loader-card" style="max-width: 500px; padding: 40px; text-align: center; border-radius: 24px;">
+                    <div class="kpi-icon icon-blue" style="font-size: 32px; margin: 0 auto 20px auto; width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(59, 130, 246, 0.1); color: #3b82f6;"><i class="fa-solid fa-file-excel"></i></div>
+                    <h2 style="margin-bottom: 10px; font-weight: 700; color: #f8fafc;">No Patient Data Loaded</h2>
+                    <p style="color: #94a3b8; margin-bottom: 25px; line-height: 1.6; font-size: 14px;">This serverless dashboard processes files entirely on your device. Please select your oncology patient coordination Excel tracker (.xlsx) to populate the dashboard.</p>
+                    <label for="excel-file-initial" class="btn btn-primary" style="cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; font-size: 15px; margin: 0 auto; border-radius: 12px;">
+                        <i class="fa-solid fa-upload"></i>
+                        <span>Select Excel File (.xlsx)</span>
+                    </label>
+                    <input type="file" id="excel-file-initial" accept=".xlsx" style="display: none;">
+                </div>
+            </div>
+
+            <!-- Toast Notifications -->
+            <div id="toast-container" class="toast-container"></div>
+
+            <!-- Workspace Tabs Content -->
+            <div class="workspace-tabs-content">
+                
+                <!-- 1. OVERVIEW TAB -->
+                <section class="tab-pane active" id="tab-overview">
+                    <!-- Cards Grid -->
+                    <div class="kpi-grid">
+                        <div class="kpi-card glass-card ripple">
+                            <div class="kpi-icon icon-blue"><i class="fa-solid fa-users"></i></div>
+                            <div class="kpi-data">
+                                <h3>Total Patients</h3>
+                                <p class="kpi-value" id="kpi-total-patients">0</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple">
+                            <div class="kpi-icon icon-green"><i class="fa-solid fa-user-check"></i></div>
+                            <div class="kpi-data">
+                                <h3>Active Patients</h3>
+                                <p class="kpi-value" id="kpi-active-patients">0</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple">
+                            <div class="kpi-icon icon-amber"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                            <div class="kpi-data">
+                                <h3>Pending Referrals</h3>
+                                <p class="kpi-value" id="kpi-pending-referrals">0</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple">
+                            <div class="kpi-icon icon-indigo"><i class="fa-solid fa-calendar-day"></i></div>
+                            <div class="kpi-data">
+                                <h3>NCM Cases</h3>
+                                <p class="kpi-value" id="kpi-ncm-cases">0</p>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple">
+                            <div class="kpi-icon icon-danger"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div class="kpi-data">
+                                <h3>Active Barriers</h3>
+                                <p class="kpi-value" id="kpi-active-barriers">0</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Charts & Insights -->
+                    <div class="dashboard-grid">
+                        <div class="dashboard-card glass-card col-span-2">
+                            <div class="card-header">
+                                <h3>Patient Distribution by Clinic & Division</h3>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-clinic-division"></canvas>
+                            </div>
+                        </div>
+                        <div class="dashboard-card glass-card">
+                            <div class="card-header">
+                                <h3>Medical Referral Status</h3>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-referral-status"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-grid margin-top-20">
+                        <div class="dashboard-card glass-card">
+                            <div class="card-header">
+                                <h3>Patients by Diagnosis (Top 5)</h3>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-diagnoses"></canvas>
+                            </div>
+                        </div>
+                        <div class="dashboard-card glass-card col-span-2">
+                            <div class="card-header">
+                                <h3>Cases by Assigned Coordinator</h3>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="chart-coordinators"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. MASTER TRACKER TAB -->
+                <section class="tab-pane" id="tab-master">
+                    <div class="filter-bar glass-card">
+                        <div class="search-box">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="master-search-input" placeholder="Search by patient name, ID, or file number...">
+                        </div>
+                        <div class="filters-grid">
+                            <div class="filter-group">
+                                <label for="filter-clinic">Clinic</label>
+                                <select id="filter-clinic">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="filter-division">Division</label>
+                                <select id="filter-division">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="filter-coordinator">Coordinator</label>
+                                <select id="filter-coordinator">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <label for="filter-status">Case Status</label>
+                                <select id="filter-status">
+                                    <option value="">All</option>
+                                </select>
+                            </div>
+                            <div class="filter-group">
+                                <button class="btn btn-secondary btn-icon-only" id="clear-filters-btn" title="Clear Filters">
+                                    <i class="fa-solid fa-filter-circle-xmark"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Patients Grid Table -->
+                    <div class="table-container glass-card">
+                        <div class="table-actions">
+                            <div class="records-count">Matching records: <span id="matching-records-count">0</span></div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm" id="print-master-btn" data-table-id="patients-data-table" data-tab-name="Master Registry">
+                                    <i class="fa-solid fa-print"></i> Print
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="export-excel-btn">
+                                    <i class="fa-solid fa-file-excel"></i> Export Current Data
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="patients-data-table">
+                                <thead>
+                                    <tr>
+                                        <th data-sort="Patient Name">Patient Name <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="ID">ID <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Clinic">Clinic <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Division">Division <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Coordinator">Coordinator <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Primary Physician">Primary Physician <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Treatment Referral Status">Treatment Referral <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Permit Status">Permit Status <i class="fa-solid fa-sort"></i></th>
+                                        <th data-sort="Case Status">Case Status <i class="fa-solid fa-sort"></i></th>
+                                        <th><i class="fa-solid fa-lightbulb" style="color:var(--color-warning);"></i> Smart Analysis</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="patients-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="table-pagination">
+                            <span class="pagination-info" id="pagination-info-text">Showing 0 to 0 of 0 cases</span>
+                            <div class="pagination-buttons">
+                                <button class="btn btn-secondary btn-sm" id="prev-page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Previous</button>
+                                <button class="btn btn-secondary btn-sm" id="next-page-btn" disabled>Next <i class="fa-solid fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 3. PENDING FOLLOWUP TAB -->
+                <section class="tab-pane" id="tab-followup">
+                    <div class="info-alert glass-card">
+                        <div class="alert-icon"><i class="fa-solid fa-info-circle"></i></div>
+                        <div class="alert-content">
+                            <h4>Pending Treatment Referrals Monitor</h4>
+                            <p>This table displays patients whose treatment referral status is <strong>Pending</strong>. Please follow up on them urgently.</p>
+                        </div>
+                    </div>
+                    <div class="table-container glass-card margin-top-20">
+                        <div class="table-actions">
+                            <div class="search-box">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="followup-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm print-btn" id="print-followup-btn" data-table-id="followup-table" data-tab-name="Pending Follow-ups">
+                                    <i class="fa-solid fa-print"></i> Print Report
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="followup-table">
+                                <thead>
+                                    <tr>
+                                        <th>Patient Name</th>
+                                        <th>ID</th>
+                                        <th>Clinic</th>
+                                        <th>Diagnosis</th>
+                                        <th>Coordinator</th>
+                                        <th>Primary Physician</th>
+                                        <th>Proposed Treatment Plan</th>
+                                        <th>Current Barriers/Issues</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="followup-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4. NEW CASES MEETING TAB -->
+                <section class="tab-pane" id="tab-ncm">
+                    <div class="info-alert glass-card bg-indigo-glow">
+                        <div class="alert-icon"><i class="fa-solid fa-user-doctor"></i></div>
+                        <div class="alert-content">
+                            <h4>Weekly New Cases Meeting (NCM) Review</h4>
+                            <p>Patients listed in this section have been flagged for review in the weekly multidisciplinary meeting (New Cases Meeting column set to Yes).</p>
+                        </div>
+                    </div>
+                    <div class="table-container glass-card margin-top-20">
+                        <div class="table-actions">
+                            <div class="search-box">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="ncm-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm print-btn" id="print-ncm-btn" data-table-id="ncm-table" data-tab-name="New Cases Meeting">
+                                    <i class="fa-solid fa-print"></i> Print Report
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="ncm-table">
+                                <thead>
+                                    <tr>
+                                        <th>Patient Name</th>
+                                        <th>ID</th>
+                                        <th>Diagnosis</th>
+                                        <th>Clinic</th>
+                                        <th>Coordinator</th>
+                                        <th>Primary Physician</th>
+                                        <th>Proposed Treatment Plan</th>
+                                        <th>NCM Decision</th>
+                                        <th>Overall Case Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ncm-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 5. INPATIENT TAB -->
+                <section class="tab-pane" id="tab-inpatient">
+                    <div class="table-container glass-card">
+                        <div class="card-header border-none padding-bottom-none">
+                            <h3>Inpatient Cases</h3>
+                        </div>
+                        <div class="table-actions margin-top-20">
+                            <div class="search-box">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="inpatient-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm print-btn" id="print-inpatient-btn" data-table-id="inpatient-table" data-tab-name="Inpatient Cases">
+                                    <i class="fa-solid fa-print"></i> Print Report
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="inpatient-table">
+                                <thead>
+                                    <tr>
+                                        <th>Patient Name</th>
+                                        <th>ID</th>
+                                        <th>Clinic</th>
+                                        <th>Diagnosis</th>
+                                        <th>Coordinator</th>
+                                        <th>Chemotherapy Date</th>
+                                        <th>Current Barriers/Issues</th>
+                                        <th>Case Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="inpatient-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 6. OUTPATIENT TAB -->
+                <section class="tab-pane" id="tab-outpatient">
+                    <div class="table-container glass-card">
+                        <div class="card-header border-none padding-bottom-none">
+                            <h3>Outpatient Cases</h3>
+                        </div>
+                        <div class="table-actions margin-top-20">
+                            <div class="search-box">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="outpatient-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm print-btn" id="print-outpatient-btn" data-table-id="outpatient-table" data-tab-name="Outpatient Cases">
+                                    <i class="fa-solid fa-print"></i> Print Report
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="outpatient-table">
+                                <thead>
+                                    <tr>
+                                        <th>Patient Name</th>
+                                        <th>ID</th>
+                                        <th>Clinic</th>
+                                        <th>Diagnosis</th>
+                                        <th>Coordinator</th>
+                                        <th>Chemotherapy Date</th>
+                                        <th>Current Barriers/Issues</th>
+                                        <th>Case Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="outpatient-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 7. BARRIERS TAB -->
+                <section class="tab-pane" id="tab-barriers">
+                    <div class="danger-alert glass-card">
+                        <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div class="alert-content">
+                            <h4>Active Barriers Monitor</h4>
+                            <p>This table shows all patients with active barriers or issues recorded under the "Current Barrier/Issue" field. Please resolve these barriers to facilitate referrals and permits.</p>
+                        </div>
+                    </div>
+                    <div class="table-container glass-card margin-top-20">
+                        <div class="table-actions">
+                            <div class="search-box">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="barriers-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="table-buttons">
+                                <button class="btn btn-secondary btn-sm print-btn" id="print-barriers-btn" data-table-id="barriers-table" data-tab-name="Active Barriers Monitor">
+                                    <i class="fa-solid fa-print"></i> Print Report
+                                </button>
+                            </div>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="barriers-table">
+                                <thead>
+                                    <tr>
+                                        <th>Patient Name</th>
+                                        <th>ID</th>
+                                        <th>Coordinator</th>
+                                        <th>Clinic</th>
+                                        <th>Current Barrier / Issue</th>
+                                        <th>Additional Notes</th>
+                                        <th>Treatment Referral Status</th>
+                                        <th>Permit Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="barriers-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 8. SMART ANALYTICS TAB -->
+                <section class="tab-pane" id="tab-analytics">
+
+                    <!-- Analytics Header Summary Cards -->
+                    <div class="analytics-summary-grid">
+                        <div class="analytics-kpi glass-card" id="akpi-1">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-xmark"></i></div>
+                            <div><h4>Pending without NCM</h4><p class="akpi-val" id="akpi-val-1">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-2">
+                            <div class="analytics-kpi-icon icon-indigo"><i class="fa-solid fa-check"></i></div>
+                            <div><h4>Pending with NCM</h4><p class="akpi-val" id="akpi-val-2">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-3">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-passport"></i></div>
+                            <div><h4>Permit Form Sent / Permit Status Pending</h4><p class="akpi-val" id="akpi-val-3">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-4">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-file-circle-exclamation"></i></div>
+                            <div><h4>Referral Form Sent / Other Status Pending</h4><p class="akpi-val" id="akpi-val-4">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-5">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-person-circle-question"></i></div>
+                            <div><h4>Without/Follow-up with Pending</h4><p class="akpi-val" id="akpi-val-5">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-6">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-calendar-xmark"></i></div>
+                            <div><h4>NCM=Yes without Chemo Date</h4><p class="akpi-val" id="akpi-val-6">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-7">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-bell-slash"></i></div>
+                            <div><h4>Scheduled Chemo — Notification Pending</h4><p class="akpi-val" id="akpi-val-7">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-8">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-house-medical-circle-exclamation"></i></div>
+                            <div><h4>Approved Treatment (NCM=No) — Chemo Pending</h4><p class="akpi-val" id="akpi-val-8">0</p></div>
+                        </div>
+                        <div class="analytics-kpi glass-card" id="akpi-9">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-clock"></i></div>
+                            <div><h4>Approved Treatment (NCM=Yes) — Chemo Pending</h4><p class="akpi-val" id="akpi-val-9">0</p></div>
+                        </div>
+                    </div>
+
+                    <!-- Analytics Search Filter Bar -->
+                    <div class="filter-bar glass-card">
+                        <div class="search-box">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="analytics-search-input" placeholder="Search all analysis lists below by name, ID, or file number...">
+                        </div>
+                    </div>
+
+                    <!-- Analysis 1: Pending + NCM = No -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-amber">
+                            <div class="analytics-icon"><i class="fa-solid fa-circle-xmark"></i></div>
+                            <div>
+                                <h3>① Treatment Referral Pending — Not referred to NCM yet</h3>
+                                <p>Patients with treatment referral status as <strong>Pending</strong> and New Cases Meeting = <strong>No</strong> or empty — need to be added to the weekly meeting.</p>
+                            </div>
+                            <span class="analytics-count" id="count-a1">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-1-btn" data-table-id="analytics-table-1" data-tab-name="Pending Treatment Referral Without NCM">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-1">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Diagnosis</th>
+                                    <th>Coordinator</th><th>Proposed Treatment Plan</th><th>NCM</th><th>Barriers</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-1"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 2: Pending + NCM = Yes -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-indigo">
+                            <div class="analytics-icon"><i class="fa-solid fa-clock"></i></div>
+                            <div>
+                                <h3>② Treatment Referral Pending — Referred to NCM</h3>
+                                <p>Patients with treatment referral status as <strong>Pending</strong> and New Cases Meeting = <strong>Yes</strong> — awaiting meeting decision.</p>
+                            </div>
+                            <span class="analytics-count analytics-count-indigo" id="count-a2">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-2-btn" data-table-id="analytics-table-2" data-tab-name="Pending Treatment Referral With NCM">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-2">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Diagnosis</th>
+                                    <th>Coordinator</th><th>Primary Physician</th><th>Proposed Treatment Plan</th><th>NCM Decision</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-2"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 3: Permit form sent + Permit Status pending/empty -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-amber">
+                            <div class="analytics-icon"><i class="fa-solid fa-passport"></i></div>
+                            <div>
+                                <h3>③ Permit Form Sent — Permit Status Pending/Empty</h3>
+                                <p>Patients who had their permit form sent (Permit form sent = yes) but Permit Status is <strong>Pending</strong> or empty — requires follow-up with the permits department.</p>
+                            </div>
+                            <span class="analytics-count" id="count-a3">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-3-btn" data-table-id="analytics-table-3" data-tab-name="Permit Form Sent with Pending Status">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-3">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Coordinator</th>
+                                    <th>Permit Form Sent</th><th>Permit Status</th><th>Patient Notified</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-3"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 4: Referral forms sent + Other Referral Status = pending -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-danger">
+                            <div class="analytics-icon"><i class="fa-solid fa-file-circle-exclamation"></i></div>
+                            <div>
+                                <h3>④ Referral Form Sent — Other Referral Status Pending</h3>
+                                <p>Patients who had referral forms sent (Referral forms sent ≠ no/empty) and other referral status is <strong>Pending</strong> — requires follow-up with the referral destination.</p>
+                            </div>
+                            <span class="analytics-count analytics-count-danger" id="count-a4">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-4-btn" data-table-id="analytics-table-4" data-tab-name="Referral Form Sent with Pending Other Referral">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-4">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Coordinator</th>
+                                    <th>Referral Forms Sent</th><th>Other Referral Status</th><th>Main Treatment Referral Status</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-4"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 5: Type = without/evaluation + Treatment Referral Pending -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-danger">
+                            <div class="analytics-icon"><i class="fa-solid fa-person-circle-question"></i></div>
+                            <div>
+                                <h3>⑤ Referral Type Without/Evaluation — with Pending Status</h3>
+                                <p>Patients with referral type as <strong>Without</strong> or <strong>Evaluation/Follow-up</strong> and treatment referral status is <strong>Pending</strong> — contradiction that requires review.</p>
+                            </div>
+                            <span class="analytics-count analytics-count-danger" id="count-a5">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-5-btn" data-table-id="analytics-table-5" data-tab-name="Without/Evaluation Referral Type with Pending Status">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-5">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Diagnosis</th>
+                                    <th>Referral Type</th><th>Treatment Referral Status</th><th>Coordinator</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-5"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 6: NCM = yes + Chemo Date not a real date -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-amber">
+                            <div class="analytics-icon"><i class="fa-solid fa-calendar-xmark"></i></div>
+                            <div>
+                                <h3>⑥ NCM = Yes — without specified Chemotherapy Date</h3>
+                                <p>Patients listed in New Cases Meeting (NCM = Yes) but chemo date is empty or invalid — requires scheduling.</p>
+                            </div>
+                            <span class="analytics-count" id="count-a6">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-6-btn" data-table-id="analytics-table-6" data-tab-name="NCM Approved Case without Scheduled Chemo Date">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-6">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Diagnosis</th>
+                                    <th>Coordinator</th><th>NCM Decision</th><th>Current Chemotherapy Date</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-6"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 7: Scheduled Chemo — Notification Pending -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-amber">
+                            <div class="analytics-icon"><i class="fa-solid fa-bell-slash"></i></div>
+                            <div>
+                                <h3>⑦ Scheduled Chemotherapy — Notification Pending</h3>
+                                <p>Chemotherapy appointment is scheduled but patient has not been notified yet (Patient Notified = No/Empty).</p>
+                            </div>
+                            <span class="analytics-count" id="count-a7">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-7-btn" data-table-id="analytics-table-7" data-tab-name="Scheduled Chemo Notification Pending">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-7">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Diagnosis</th>
+                                    <th>Coordinator</th><th>Chemo Appointment Date</th><th>Patient Notified</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-7"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 8: Approved Referral (NCM = No) — Missing Chemo Appointment -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-danger">
+                            <div class="analytics-icon"><i class="fa-solid fa-house-medical-circle-exclamation"></i></div>
+                            <div>
+                                <h3>⑧ Approved Treatment Referral (NCM = No) — Missing Chemotherapy Appointment</h3>
+                                <p>Treatment referral is approved (NCM = No/Empty) but chemotherapy appointment date is missing.</p>
+                            </div>
+                            <span class="analytics-count" id="count-a8">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-8-btn" data-table-id="analytics-table-8" data-tab-name="Approved Referral NCM No Missing Chemo Appt">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-8">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Division</th>
+                                    <th>Coordinator</th><th>Action Needed</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-8"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Analysis 9: Approved Referral (NCM = Yes) — Missing Chemo Appointment -->
+                    <div class="analytics-section glass-card">
+                        <div class="analytics-section-header analytics-header-danger">
+                            <div class="analytics-icon"><i class="fa-solid fa-clock"></i></div>
+                            <div>
+                                <h3>⑨ Approved Treatment Referral (NCM = Yes) — Missing Chemotherapy Appointment</h3>
+                                <p>Treatment referral is approved (NCM = Yes) but chemotherapy appointment date is missing.</p>
+                            </div>
+                            <span class="analytics-count" id="count-a9">0</span>
+                        </div>
+                        <div class="analytics-table-actions">
+                            <button class="btn btn-secondary btn-sm print-btn" id="print-analytics-9-btn" data-table-id="analytics-table-9" data-tab-name="Approved Referral NCM Yes Missing Chemo Appt">
+                                <i class="fa-solid fa-print"></i> Print Table
+                            </button>
+                        </div>
+                        <div class="responsive-table-wrapper">
+                            <table class="data-table" id="analytics-table-9">
+                                <thead><tr>
+                                    <th>Patient Name</th><th>ID</th><th>Clinic</th><th>Division</th>
+                                    <th>Coordinator</th><th>Action Needed</th><th></th>
+                                </tr></thead>
+                                <tbody id="analytics-tbody-9"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </section>
+
+                <!-- 9. SETTINGS TAB -->
+                <section class="tab-pane" id="tab-settings">
+                    <div class="settings-grid">
+                        <div class="settings-card glass-card">
+                            <div class="card-header">
+                                <h3>Serverless Local Processing</h3>
+                            </div>
+                            <div class="card-body">
+                                <p class="settings-desc">This is a serverless static version of the dashboard running directly in your browser. All Excel processing is performed client-side using SheetJS. No data is sent to any server. Your data is cached locally in your browser's Secure LocalStorage.</p>
+                                <div class="form-group margin-top-20">
+                                    <label>Load New Excel File:</label>
+                                    <div class="input-with-button">
+                                        <label for="settings-file-upload" class="btn btn-primary" style="cursor: pointer; width: 100%; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                            <i class="fa-solid fa-file-excel"></i> Upload and Parse Coordination File
+                                        </label>
+                                        <input type="file" id="settings-file-upload" accept=".xlsx" style="display: none;">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-card glass-card">
+                            <div class="card-header">
+                                <h3>Browser Storage & Metadata</h3>
+                            </div>
+                            <div class="card-body">
+                                <table class="settings-table">
+                                    <tr>
+                                        <td>Storage Type:</td>
+                                        <td>HTML5 LocalStorage (Offline)</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Data Cache Key:</td>
+                                        <td><code>dashboard_static_data</code></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Total Tracked Patient Fields:</td>
+                                        <td>27 fields (including IDs)</td>
+                                    </tr>
+                                </table>
+                                <button class="btn btn-secondary margin-top-20 w-100" id="reset-cache-btn">
+                                    <i class="fa-solid fa-trash-can"></i> Clear Browser Cache
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Patient Details Sliding Drawer (Overlay) -->
+    <div id="patient-details-drawer" class="details-drawer hidden">
+        <div class="drawer-header">
+            <div class="drawer-header-title">
+                <h2 id="drawer-patient-name">Patient Name</h2>
+                <p>National ID: <span id="drawer-patient-id">-</span> · File Number: <span id="drawer-patient-file">-</span></p>
+            </div>
+            <button class="btn-close-drawer" id="close-drawer-btn" aria-label="Close Details">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="drawer-body">
+            
+            <!-- Patient Status Summary Board -->
+            <div class="drawer-status-board">
+                <div class="status-board-card">
+                    <span class="sb-label">Case Status</span>
+                    <span class="sb-val" id="drawer-case-status-badge">-</span>
+                </div>
+                <div class="status-board-card">
+                    <span class="sb-label">Treatment Referral</span>
+                    <span class="sb-val" id="drawer-referral-status-badge">-</span>
+                </div>
+                <div class="status-board-card">
+                    <span class="sb-label">Permit Status</span>
+                    <span class="sb-val" id="drawer-permit-status-badge">-</span>
+                </div>
+                <div class="status-board-card">
+                    <span class="sb-label">Chemo Date</span>
+                    <span class="sb-val text-green font-weight-bold" id="drawer-chemo-date-badge">-</span>
+                </div>
+            </div>
+
+            <!-- Workflow Next Action Hint Banner -->
+            <div class="drawer-action-hint-container" id="drawer-action-hint-container">
+                <div class="action-hint-icon"><i class="fa-solid fa-lightbulb text-warning"></i></div>
+                <div class="action-hint-content">
+                    <h4>Recommended Next Step</h4>
+                    <p id="drawer-action-hint-text">Determine coordination steps...</p>
+                </div>
+            </div>
+
+            <!-- Grouped Demographics & Clinical Information Cards -->
+            <div class="drawer-cards-grid">
+                
+                <!-- Card 1: Clinical & Demographics -->
+                <div class="drawer-card">
+                    <h4><i class="fa-solid fa-hospital-user"></i> Patient Demographics</h4>
+                    <div class="drawer-card-grid">
+                        <div class="data-item">
+                            <span class="label">Clinic / Branch</span>
+                            <span class="value" id="drawer-clinic">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Division</span>
+                            <span class="value" id="drawer-division">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Clinic Visit Date</span>
+                            <span class="value" id="drawer-clinic-visit">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Mobile Number</span>
+                            <span class="value" id="drawer-mobile">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Diagnosis & Oncology</span>
+                            <span class="value font-weight-bold text-indigo" id="drawer-diagnosis">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Overall Case Status</span>
+                            <span class="value" id="drawer-case-status">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Attending Physician</span>
+                            <span class="value" id="drawer-physician">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Coordinator Nurse</span>
+                            <span class="value" id="drawer-coordinator">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 2: Referrals & NCM Meetings -->
+                <div class="drawer-card bg-indigo-card-fade">
+                    <h4><i class="fa-solid fa-receipt"></i> Referrals & NCM Meetings</h4>
+                    <div class="drawer-card-grid">
+                        <div class="data-item">
+                            <span class="label">Patient Referral Type</span>
+                            <span class="value" id="drawer-referral-type">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Referral Forms Sent</span>
+                            <span class="value" id="drawer-referral-forms">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Treatment Referral Status</span>
+                            <span class="value" id="drawer-treatment-referral-status">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Other Referral Status</span>
+                            <span class="value" id="drawer-other-referral-status">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Is added to NCM?</span>
+                            <span class="value" id="drawer-ncm-flag">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">NCM Decision</span>
+                            <span class="value font-weight-bold text-indigo" id="drawer-ncm-decision">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Approved Treatment Plan</span>
+                            <span class="value" id="drawer-treatment-plan">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card 3: Logistics, Permits & Appointments -->
+                <div class="drawer-card bg-amber-card-fade">
+                    <h4><i class="fa-solid fa-passport"></i> Logistics & Permits</h4>
+                    <div class="drawer-card-grid">
+                        <div class="data-item">
+                            <span class="label">Permit Request Sent?</span>
+                            <span class="value" id="drawer-permit-sent">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Permit Status</span>
+                            <span class="value" id="drawer-permit-status">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Patient Notified (Permit)</span>
+                            <span class="value" id="drawer-patient-notified">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">First Chemo Session Date</span>
+                            <span class="value font-weight-bold text-green" id="drawer-chemo-date">-</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">Other Appts & Dates</span>
+                            <span class="value" id="drawer-other-appointment">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Patient Notified (Other Appts)</span>
+                            <span class="value" id="drawer-patient-notified-other">-</span>
+                        </div>
+                        <div class="data-item col-span-2">
+                            <span class="label">Patient Guidance / Direction</span>
+                            <span class="value" id="drawer-guidance">-</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Smart notes section -->
+            <div class="drawer-section smart-notes-section" id="drawer-smart-notes-section">
+                <h3><i class="fa-solid fa-lightbulb"></i> Smart Analysis for this Case</h3>
+                <div id="drawer-smart-notes-list" class="smart-notes-list"></div>
+            </div>
+
+            <!-- Barriers and notes block -->
+            <div class="drawer-section border-none padding-bottom-30">
+                <h3><i class="fa-solid fa-note-sticky"></i> Barriers, Issues & Extra Notes</h3>
+                <div class="barrier-box" id="drawer-barrier-container">
+                    <span class="label text-danger font-weight-bold">Current Barrier / Issue:</span>
+                    <p class="barrier-value text-danger" id="drawer-current-barrier">No active barriers recorded for this file.</p>
+                </div>
+                <div class="notes-box margin-top-15">
+                    <span class="label">General File Notes:</span>
+                    <p class="notes-value" id="drawer-notes">No additional notes.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Print Options Column Selection Modal -->
+    <div id="print-column-modal" class="modal-overlay hidden">
+        <div class="modal-card glass-card">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-print"></i> Select Columns to Print</h3>
+                <button class="btn-close-modal" id="close-print-modal-btn" aria-label="Close Modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Choose which columns to include in your landscape report:</p>
+                <div class="column-checkbox-grid" id="print-column-checkboxes">
+                    <!-- Checkboxes populated dynamically in JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="print-cancel-btn">Cancel</button>
+                <button class="btn btn-primary" id="print-confirm-btn"><i class="fa-solid fa-print"></i> Generate PDF/Print</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Core Scripts -->
+    <script src="dashboard.js"></script>
+</body>
+</html>
