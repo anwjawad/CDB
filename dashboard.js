@@ -5,6 +5,7 @@ let filteredPatients = [];
 let charts = {};
 let currentSort = { column: 'Patient Name', direction: 'asc' };
 let pagination = { currentPage: 1, pageSize: 25 };
+let currentQuickFilter = 'all';
 
 // --- Key Mapping Configuration for Excel Headers ---
 const KEY_MAP = {
@@ -48,6 +49,347 @@ function getPatientVal(pat, type) {
     return "";
 }
 
+function hasActiveBarrier(pat) {
+    const barrier = getPatientVal(pat, 'barrier').trim();
+    return barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no';
+}
+
+function updateMasterFunnel() {
+    let registered = patientsData.length;
+    let pending = 0;
+    let ncmCount = 0;
+    let permitCount = 0;
+    let chemoScheduled = 0;
+
+    patientsData.forEach(pat => {
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
+        const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
+        const permitSent = getPatientVal(pat, 'permitSent').toLowerCase().trim();
+        const chemo = getPatientVal(pat, 'chemoDate').trim();
+
+        if (refStatus === 'pending' || refStatus === 'قيد الانتظار' || refStatus === 'معلق') pending++;
+        if (ncm === 'yes' || ncm === 'نعم') ncmCount++;
+        if (permitSent === 'yes' || permitSent === 'نعم') permitCount++;
+        if (chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo)) chemoScheduled++;
+    });
+
+    const elRegistered = document.getElementById("funnel-val-registered");
+    const elPending = document.getElementById("funnel-val-pending");
+    const elNcm = document.getElementById("funnel-val-ncm");
+    const elPermit = document.getElementById("funnel-val-permit");
+    const elChemo = document.getElementById("funnel-val-chemo");
+
+    if (elRegistered) elRegistered.innerText = registered;
+    if (elPending) elPending.innerText = pending;
+    if (elNcm) elNcm.innerText = ncmCount;
+    if (elPermit) elPermit.innerText = permitCount;
+    if (elChemo) elChemo.innerText = chemoScheduled;
+}
+
+function getTimelineSteps(pat) {
+    const visitDate = getPatientVal(pat, 'visitDate').trim();
+    const refStatusRaw = getPatientVal(pat, 'treatmentReferralStatus').trim();
+    const refStatus = refStatusRaw.toLowerCase();
+    
+    const ncmFlagRaw = getPatientVal(pat, 'ncm').trim();
+    const ncmFlag = ncmFlagRaw.toLowerCase();
+    const ncmDecision = getPatientVal(pat, 'ncmDecision').trim();
+    
+    const permitSentRaw = getPatientVal(pat, 'permitSent').trim();
+    const permitSent = permitSentRaw.toLowerCase();
+    const permitStatusRaw = getPatientVal(pat, 'permitStatus').trim();
+    const permitStatus = permitStatusRaw.toLowerCase();
+    
+    const chemoDate = getPatientVal(pat, 'chemoDate').trim();
+    const isChemoScheduled = chemoDate && /^\d{4}-\d{2}-\d{2}$/.test(chemoDate);
+    
+    const notifiedRaw = getPatientVal(pat, 'notified').trim();
+    const notified = notifiedRaw.toLowerCase();
+
+    // 1. Clinic Visit
+    let step1 = { key: "V", title: "Clinic Visit", desc: "Patient visit record", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (visitDate) {
+        step1.state = "completed";
+        step1.desc = `Visited on ${visitDate}`;
+        step1.icon = '<i class="fa-solid fa-circle-check"></i>';
+    } else {
+        step1.state = "pending";
+        step1.desc = "Awaiting clinic visit registration";
+        step1.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    // 2. Referral Submitted
+    let step2 = { key: "R", title: "Referral Submitted", desc: "Treatment referral submitted to coordinator", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (refStatusRaw) {
+        if (refStatus === 'pending') {
+            step2.state = "pending";
+            step2.desc = "Referral submitted, pending review";
+            step2.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        } else if (refStatus === 'approved' || refStatus === 'yes' || refStatus === 'تم التنسيق' || refStatus === 'موافق عليه') {
+            step2.state = "completed";
+            step2.desc = `Referral approved (${refStatusRaw})`;
+            step2.icon = '<i class="fa-solid fa-circle-check"></i>';
+        } else if (refStatus === 'rejected' || refStatus === 'no' || refStatus === 'مرفوض') {
+            step2.state = "error";
+            step2.desc = `Referral rejected (${refStatusRaw})`;
+            step2.icon = '<i class="fa-solid fa-circle-xmark"></i>';
+        } else {
+            step2.state = "completed";
+            step2.desc = `Status: ${refStatusRaw}`;
+            step2.icon = '<i class="fa-solid fa-circle-check"></i>';
+        }
+    } else {
+        if (step1.state === "completed") {
+            step2.state = "pending";
+            step2.desc = "Awaiting referral status entry";
+            step2.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        }
+    }
+
+    // 3. NCM Review
+    let step3 = { key: "N", title: "NCM Review", desc: "New Cases Meeting review status", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (ncmFlag === 'yes' || ncmFlag === 'نعم') {
+        if (ncmDecision) {
+            step3.state = "completed";
+            step3.desc = `Decision: ${ncmDecision}`;
+            step3.icon = '<i class="fa-solid fa-circle-check"></i>';
+        } else {
+            step3.state = "pending";
+            step3.desc = "Awaiting meeting review and decision";
+            step3.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        }
+    } else {
+        step3.state = "skipped";
+        step3.desc = "Not flagged for NCM review";
+        step3.icon = '<i class="fa-solid fa-ban"></i>';
+    }
+
+    // 4. Permit Stage
+    let step4 = { key: "P", title: "Permit Stage", desc: "Treatment permit clearance", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (permitSent === 'yes' || permitSent === 'نعم') {
+        if (permitStatus === 'approved' || permitStatus === 'موافق عليه' || permitStatus === 'تم التنسيق' || permitStatus === 'yes' || permitStatus === 'نعم') {
+            step4.state = "completed";
+            step4.desc = `Permit approved: ${permitStatusRaw}`;
+            step4.icon = '<i class="fa-solid fa-circle-check"></i>';
+        } else if (permitStatus === 'rejected' || permitStatus === 'مرفوض' || permitStatus === 'no' || permitStatus === 'لا') {
+            step4.state = "error";
+            step4.desc = `Permit rejected: ${permitStatusRaw}`;
+            step4.icon = '<i class="fa-solid fa-circle-xmark"></i>';
+        } else {
+            step4.state = "pending";
+            step4.desc = `Permit sent, status: ${permitStatusRaw || 'Pending'}`;
+            step4.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        }
+    } else {
+        step4.state = "skipped";
+        step4.desc = "No permit request required";
+        step4.icon = '<i class="fa-solid fa-ban"></i>';
+    }
+
+    // 5. Chemo Scheduled
+    let step5 = { key: "C", title: "Chemo Scheduled", desc: "Chemotherapy appointment date", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (isChemoScheduled) {
+        step5.state = "completed";
+        step5.desc = `Scheduled for ${chemoDate}`;
+        step5.icon = '<i class="fa-solid fa-circle-check"></i>';
+    } else {
+        const isPriorStepDone = step2.state === "completed" && (step3.state === "completed" || step3.state === "skipped") && (step4.state === "completed" || step4.state === "skipped");
+        if (isPriorStepDone) {
+            step5.state = "pending";
+            step5.desc = "Awaiting chemo appointment scheduling";
+            step5.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        } else {
+            step5.desc = "Awaiting prior coordination clearances";
+        }
+    }
+
+    // 6. Patient Notified
+    let step6 = { key: "B", title: "Patient Notified", desc: "Patient informed of chemo appointment", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
+    if (notified === 'yes' || notified === 'نعم') {
+        step6.state = "completed";
+        step6.desc = "Patient notified successfully";
+        step6.icon = '<i class="fa-solid fa-circle-check"></i>';
+    } else {
+        if (isChemoScheduled) {
+            step6.state = "pending";
+            step6.desc = "Notification pending (requires follow-up)";
+            step6.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        } else {
+            step6.desc = "Awaiting chemo schedule first";
+        }
+    }
+
+    return [step1, step2, step3, step4, step5, step6];
+}
+
+function getPatientNameHTML(pat) {
+    const name = getPatientVal(pat, 'name');
+    if (hasActiveBarrier(pat)) {
+        return `
+            <div class="name-wrapper">
+                <span class="barrier-pulse-badge" title="Active Barrier: ${getPatientVal(pat, 'barrier')}"></span>
+                <strong>${name}</strong>
+            </div>
+        `;
+    }
+    return `<strong>${name}</strong>`;
+}
+
+function generateMiniTimelineHTML(pat) {
+    const steps = getTimelineSteps(pat);
+    let html = `<div class="mini-timeline-container"><div class="mini-timeline">`;
+    steps.forEach((step, idx) => {
+        if (idx > 0) {
+            html += `<div class="mini-connector"></div>`;
+        }
+        html += `<div class="mini-step ${step.state}" title="${step.title}: ${step.desc}">${step.key}</div>`;
+    });
+    html += `</div></div>`;
+    return html;
+}
+
+function renderPatientTimeline(pat) {
+    const timelineEl = document.getElementById("drawer-patient-timeline");
+    if (!timelineEl) return;
+    
+    timelineEl.innerHTML = "";
+    const steps = getTimelineSteps(pat);
+    
+    steps.forEach(step => {
+        const stepDiv = document.createElement("div");
+        stepDiv.className = `timeline-step ${step.state}`;
+        
+        stepDiv.innerHTML = `
+            <div class="timeline-node">${step.icon}</div>
+            <div class="timeline-content">
+                <div class="timeline-title">${step.title}</div>
+                <div class="timeline-desc">${step.desc}</div>
+            </div>
+        `;
+        
+        timelineEl.appendChild(stepDiv);
+    });
+}
+
+function switchToMasterTab() {
+    const masterTabBtn = document.querySelector(".nav-item[data-tab='master']");
+    if (masterTabBtn) {
+        masterTabBtn.click();
+    }
+}
+
+function setupInteractiveKPIs() {
+    // 1. KPI Cards
+    const kpiTotal = document.getElementById("kpi-total-patients");
+    const kpiActive = document.getElementById("kpi-active-patients");
+    const kpiPending = document.getElementById("kpi-pending-referrals");
+    const kpiNcm = document.getElementById("kpi-ncm-cases");
+    const kpiBarriers = document.getElementById("kpi-active-barriers");
+
+    if (kpiTotal) {
+        const card = kpiTotal.closest(".kpi-card");
+        if (card) {
+            card.addEventListener("click", () => {
+                const pill = document.querySelector(".pill-btn[data-filter='all']");
+                if (pill) {
+                    pill.click();
+                }
+                switchToMasterTab();
+            });
+        }
+    }
+    if (kpiActive) {
+        const card = kpiActive.closest(".kpi-card");
+        if (card) {
+            card.addEventListener("click", () => {
+                const pill = document.querySelector(".pill-btn[data-filter='all']");
+                if (pill) {
+                    pill.click();
+                }
+                switchToMasterTab();
+            });
+        }
+    }
+    if (kpiPending) {
+        const card = kpiPending.closest(".kpi-card");
+        if (card) {
+            card.addEventListener("click", () => {
+                const pill = document.querySelector(".pill-btn[data-filter='pending-referrals']");
+                if (pill) {
+                    pill.click();
+                }
+                switchToMasterTab();
+            });
+        }
+    }
+    if (kpiNcm) {
+        const card = kpiNcm.closest(".kpi-card");
+        if (card) {
+            card.addEventListener("click", () => {
+                const pill = document.querySelector(".pill-btn[data-filter='ncm-cases']");
+                if (pill) {
+                    pill.click();
+                }
+                switchToMasterTab();
+            });
+        }
+    }
+    if (kpiBarriers) {
+        const card = kpiBarriers.closest(".kpi-card");
+        if (card) {
+            card.addEventListener("click", () => {
+                const pill = document.querySelector(".pill-btn[data-filter='barriers']");
+                if (pill) {
+                    pill.click();
+                }
+                switchToMasterTab();
+            });
+        }
+    }
+
+    // 2. Funnel Steps
+    const funnelSteps = document.querySelectorAll(".funnel-step");
+    funnelSteps.forEach(step => {
+        step.addEventListener("click", () => {
+            const stepName = step.getAttribute("data-step");
+            let filterName = 'all';
+            if (stepName === 'registered') {
+                filterName = 'all';
+            } else if (stepName === 'pending-referrals') {
+                filterName = 'pending-referrals';
+            } else if (stepName === 'ncm-review') {
+                filterName = 'ncm-cases';
+            } else if (stepName === 'permit-stage') {
+                filterName = 'permit-stage';
+            } else if (stepName === 'chemo-scheduled') {
+                filterName = 'chemo-scheduled';
+            }
+
+            // Find matching pill
+            const pillBtns = document.querySelectorAll(".pill-btn");
+            let foundPill = false;
+            pillBtns.forEach(btn => {
+                if (btn.getAttribute("data-filter") === filterName) {
+                    btn.click();
+                    foundPill = true;
+                }
+            });
+
+            if (!foundPill && filterName === 'chemo-scheduled') {
+                // special case since there is no pill for chemo-scheduled,
+                // we remove active class from all pills and set currentQuickFilter directly
+                pillBtns.forEach(btn => btn.classList.remove("active"));
+                currentQuickFilter = 'chemo-scheduled';
+                pagination.currentPage = 1;
+                applyFilters();
+            }
+
+            switchToMasterTab();
+        });
+    });
+}
+
+
 // --- App Initialization ---
 document.addEventListener("DOMContentLoaded", () => {
     initApp();
@@ -58,11 +400,14 @@ function initApp() {
     setupTabSwitching();
     setupSyncButton();
     setupFilterListeners();
+    setupInteractiveKPIs();
     setupPagination();
     setupExportButton();
     setupDrawerClose();
     setupTabSearches();
     setupPrinting();
+    setupMasterSearchDropdown();
+    setupPatientSearch();
     
     // Fetch configuration and initial data
     fetchConfig();
@@ -120,6 +465,8 @@ function setupTabSwitching() {
             // Re-render specific tabs if needed
             if (targetTab === 'master') {
                 applyFilters();
+            } else if (targetTab === 'patient-search') {
+                renderPatientSearchResults();
             } else if (targetTab === 'followup') {
                 renderFollowupTab();
             } else if (targetTab === 'ncm') {
@@ -517,6 +864,7 @@ function calculateKPIs() {
     document.getElementById("kpi-pending-referrals").innerText = pendingReferrals;
     document.getElementById("kpi-ncm-cases").innerText = ncmCount;
     document.getElementById("kpi-active-barriers").innerText = activeBarriers;
+    updateMasterFunnel();
 }
 
 // --- Update Badges in Sidebar ---
@@ -567,6 +915,18 @@ function setupFilterListeners() {
         }
     });
 
+    // Quick filter pills listener
+    const pillBtns = document.querySelectorAll(".pill-btn");
+    pillBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            pillBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            currentQuickFilter = btn.getAttribute("data-filter") || 'all';
+            pagination.currentPage = 1;
+            applyFilters();
+        });
+    });
+
     if (clearBtn) {
         clearBtn.addEventListener("click", () => {
             searchInput.value = "";
@@ -578,6 +938,12 @@ function setupFilterListeners() {
             // Clear tab-specific searches
             document.querySelectorAll(".table-actions input[type='text'], .filter-bar input[type='text']").forEach(inp => inp.value = "");
             
+            // Reset quick filter pill
+            pillBtns.forEach(b => b.classList.remove("active"));
+            const allBtn = document.querySelector(".pill-btn[data-filter='all']");
+            if (allBtn) allBtn.classList.add("active");
+            currentQuickFilter = 'all';
+
             pagination.currentPage = 1;
             applyFilters();
             
@@ -645,7 +1011,28 @@ function applyFilters() {
         const matchesCoordinator = !coordinatorVal || coordinator === coordinatorVal;
         const matchesStatus = !statusVal || status === statusVal;
         
-        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus;
+        // Quick filter check
+        let matchesQuickFilter = true;
+        if (currentQuickFilter === 'barriers') {
+            matchesQuickFilter = hasActiveBarrier(pat);
+        } else if (currentQuickFilter === 'pending-referrals') {
+            const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
+            matchesQuickFilter = (refStatus === 'pending' || refStatus === 'قيد الانتظار' || refStatus === 'معلق');
+        } else if (currentQuickFilter === 'ncm-cases') {
+            const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
+            matchesQuickFilter = (ncm === 'yes' || ncm === 'نعم');
+        } else if (currentQuickFilter === 'permit-stage') {
+            const permitSent = getPatientVal(pat, 'permitSent').toLowerCase().trim();
+            matchesQuickFilter = (permitSent === 'yes' || permitSent === 'نعم');
+        } else if (currentQuickFilter === 'chemo-missing') {
+            const chemo = getPatientVal(pat, 'chemoDate').trim();
+            matchesQuickFilter = !chemo || !/^\d{4}-\d{2}-\d{2}$/.test(chemo);
+        } else if (currentQuickFilter === 'chemo-scheduled') {
+            const chemo = getPatientVal(pat, 'chemoDate').trim();
+            matchesQuickFilter = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo);
+        }
+        
+        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesQuickFilter;
     });
 
     // Apply Sorting
@@ -719,9 +1106,10 @@ function renderMainTable() {
         const status = getPatientVal(pat, 'status');
         
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", id);
         row.innerHTML = `
-            <td><strong>${name}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${id}</td>
             <td>${clinic}</td>
             <td>${division || '-'}</td>
@@ -731,6 +1119,7 @@ function renderMainTable() {
             <td><span class="status-pill ${getPillClass(permit)}">${permit || 'none'}</span></td>
             <td><span class="status-pill ${getPillClass(status)}">${status || 'none'}</span></td>
             <td class="smart-notes-cell">
+                ${generateMiniTimelineHTML(pat)}
                 ${generateSmartNotesChips(pat)}
             </td>
             <td>
@@ -830,9 +1219,10 @@ function renderFollowupTab() {
 
     list.forEach(pat => {
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${getPatientVal(pat, 'id')}</td>
             <td>${getPatientVal(pat, 'clinic')}</td>
             <td>${getPatientVal(pat, 'diagnosis')}</td>
@@ -876,9 +1266,10 @@ function renderNcmTab() {
 
     list.forEach(pat => {
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${getPatientVal(pat, 'id')}</td>
             <td>${getPatientVal(pat, 'diagnosis')}</td>
             <td>${getPatientVal(pat, 'clinic')}</td>
@@ -922,9 +1313,10 @@ function renderInpatientTab() {
 
     list.forEach(pat => {
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${getPatientVal(pat, 'id')}</td>
             <td>${getPatientVal(pat, 'clinic')}</td>
             <td>${getPatientVal(pat, 'diagnosis')}</td>
@@ -967,9 +1359,10 @@ function renderOutpatientTab() {
 
     list.forEach(pat => {
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${getPatientVal(pat, 'id')}</td>
             <td>${getPatientVal(pat, 'clinic')}</td>
             <td>${getPatientVal(pat, 'diagnosis')}</td>
@@ -1013,9 +1406,10 @@ function renderBarriersTab() {
 
     list.forEach(pat => {
         const row = document.createElement("tr");
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
+            <td>${getPatientNameHTML(pat)}</td>
             <td>${getPatientVal(pat, 'id')}</td>
             <td>${getPatientVal(pat, 'coordinator')}</td>
             <td>${getPatientVal(pat, 'clinic')}</td>
@@ -1124,14 +1518,23 @@ function openPatientDrawer(pat) {
     document.getElementById("drawer-ncm-decision").innerText = getPatientVal(pat, 'ncmDecision') || '-';
     
     const barrier = getPatientVal(pat, 'barrier');
+    const barrierAlertCard = document.getElementById("drawer-barrier-alert-card");
+    const barrierAlertText = document.getElementById("drawer-barrier-alert-text");
     const barrierContainer = document.getElementById("drawer-barrier-container");
     const barrierEl = document.getElementById("drawer-current-barrier");
     if (barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no') {
         barrierEl.innerText = barrier;
         barrierEl.className = "barrier-value text-danger font-weight-bold";
+        if (barrierAlertCard && barrierAlertText) {
+            barrierAlertText.innerText = barrier;
+            barrierAlertCard.classList.remove("hidden");
+        }
     } else {
         barrierEl.innerText = "No active barriers recorded for this file.";
         barrierEl.className = "barrier-value text-muted";
+        if (barrierAlertCard) {
+            barrierAlertCard.classList.add("hidden");
+        }
     }
     
     const notesVal = getPatientVal(pat, 'notes');
@@ -1161,6 +1564,9 @@ function openPatientDrawer(pat) {
         smartNotesList.appendChild(item);
     });
     
+    // Render the Patient Coordination timeline stepper
+    renderPatientTimeline(pat);
+
     // Add backdrop if not present
     let backdrop = document.querySelector(".drawer-backdrop");
     if (!backdrop) {
@@ -1533,6 +1939,7 @@ function renderAnalyticsTab() {
     tbody1.innerHTML = a1.length === 0 ? emptyRow(9) : '';
     a1.forEach(pat => {
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1555,6 +1962,7 @@ function renderAnalyticsTab() {
     tbody2.innerHTML = a2.length === 0 ? emptyRow(9) : '';
     a2.forEach(pat => {
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1578,6 +1986,7 @@ function renderAnalyticsTab() {
     a3.forEach(pat => {
         const permitStatus = getPatientVal(pat, 'permitStatus') || 'Empty';
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1599,6 +2008,7 @@ function renderAnalyticsTab() {
     tbody4.innerHTML = a4.length === 0 ? emptyRow(8) : '';
     a4.forEach(pat => {
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1620,6 +2030,7 @@ function renderAnalyticsTab() {
     tbody5.innerHTML = a5.length === 0 ? emptyRow(8) : '';
     a5.forEach(pat => {
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1643,6 +2054,7 @@ function renderAnalyticsTab() {
         const chemoRaw = getPatientVal(pat, 'chemoDate');
         const chemoDisplay = chemoRaw && chemoRaw !== '0' && chemoRaw !== '' ? chemoRaw : 'Empty';
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1664,6 +2076,7 @@ function renderAnalyticsTab() {
     tbody7.innerHTML = a7.length === 0 ? emptyRow(8) : '';
     a7.forEach(pat => {
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1693,6 +2106,7 @@ function renderAnalyticsTab() {
             actionMsg = "Book an appointment with the inpatient coordinator";
         }
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -1721,6 +2135,7 @@ function renderAnalyticsTab() {
             actionMsg = "Book an appointment with the inpatient coordinator";
         }
         const row = document.createElement('tr');
+        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td><strong>${getPatientVal(pat, 'name')}</strong></td>
@@ -2345,5 +2760,590 @@ function getPatientActionHint(pat) {
         text: "All coordination requirements complete. Monitor patient treatment schedule and follow regular follow-ups.",
         class: 'hint-success'
     };
+}
+
+// --- Smart Patient Search Dropdown Portal ---
+function setupMasterSearchDropdown() {
+    const searchInput = document.getElementById("master-search-input");
+    const resultsContainer = document.getElementById("master-search-results");
+    if (!searchInput || !resultsContainer) return;
+
+    const updateDropdown = () => {
+        const query = searchInput.value.toLowerCase().trim();
+        if (query.length < 1) {
+            resultsContainer.classList.add("hidden");
+            resultsContainer.innerHTML = "";
+            return;
+        }
+
+        // Filter matching patients
+        const matches = patientsData.filter(pat => {
+            const name = getPatientVal(pat, 'name').toLowerCase();
+            const id = getPatientVal(pat, 'id').toLowerCase();
+            const file = getPatientVal(pat, 'file').toLowerCase();
+            return name.includes(query) || id.includes(query) || file.includes(query);
+        });
+
+        resultsContainer.innerHTML = "";
+        
+        if (matches.length === 0) {
+            const noResults = document.createElement("div");
+            noResults.className = "text-center text-muted py-3";
+            noResults.style.fontSize = "12px";
+            noResults.innerText = "No patients found matching your search. / لم يتم العثور على مرضى مطابقة للبحث.";
+            resultsContainer.appendChild(noResults);
+            resultsContainer.classList.remove("hidden");
+            return;
+        }
+
+        // Show top 6 matches
+        const topMatches = matches.slice(0, 6);
+        topMatches.forEach(pat => {
+            const name = getPatientVal(pat, 'name');
+            const id = getPatientVal(pat, 'id') || '-';
+            const file = getPatientVal(pat, 'file') || '-';
+            const caseSt = getPatientVal(pat, 'status') || 'none';
+            const trSt = getPatientVal(pat, 'treatmentReferralStatus') || 'none';
+            const pmSt = getPatientVal(pat, 'permitStatus') || 'none';
+            
+            // Create result item
+            const item = document.createElement("div");
+            item.className = "search-result-item";
+            
+            // Build header
+            const header = document.createElement("div");
+            header.className = "search-result-header";
+            
+            const nameEl = document.createElement("div");
+            nameEl.className = "search-result-name";
+            nameEl.innerText = name;
+            header.appendChild(nameEl);
+            
+            const metaEl = document.createElement("div");
+            metaEl.className = "search-result-meta";
+            metaEl.innerHTML = `<span>File: ${file}</span> <span>ID: ${id}</span>`;
+            header.appendChild(metaEl);
+            
+            item.appendChild(header);
+            
+            // Build statuses row
+            const row = document.createElement("div");
+            row.className = "search-result-row";
+            
+            const badges = document.createElement("div");
+            badges.className = "search-result-badges";
+            
+            if (caseSt && caseSt !== 'none') {
+                const b1 = document.createElement("span");
+                b1.className = `status-pill ${getPillClass(caseSt)}`;
+                b1.innerText = `Case: ${caseSt}`;
+                badges.appendChild(b1);
+            }
+            if (trSt && trSt !== 'none') {
+                const b2 = document.createElement("span");
+                b2.className = `status-pill ${getPillClass(trSt)}`;
+                b2.innerText = `Referral: ${trSt}`;
+                badges.appendChild(b2);
+            }
+            if (pmSt && pmSt !== 'none') {
+                const b3 = document.createElement("span");
+                b3.className = `status-pill ${getPillClass(pmSt)}`;
+                b3.innerText = `Permit: ${pmSt}`;
+                badges.appendChild(b3);
+            }
+            
+            row.appendChild(badges);
+            
+            // View Profile indicator
+            const actionBtn = document.createElement("span");
+            actionBtn.style.fontSize = "10px";
+            actionBtn.style.color = "var(--color-primary)";
+            actionBtn.style.fontWeight = "600";
+            actionBtn.innerHTML = `<i class="fa-solid fa-eye"></i> View Profile`;
+            row.appendChild(actionBtn);
+            
+            item.appendChild(row);
+            
+            // Build smart analysis chips
+            const analysisList = getSmartNotes(pat);
+            if (analysisList.length > 0) {
+                const analysisContainer = document.createElement("div");
+                analysisContainer.className = "search-result-analysis";
+                
+                analysisList.forEach(note => {
+                    const chip = document.createElement("span");
+                    chip.className = `search-analysis-chip ${note.level}`;
+                    chip.innerHTML = `<i class="${note.icon}"></i> ${note.chipText || note.title}`;
+                    analysisContainer.appendChild(chip);
+                });
+                
+                item.appendChild(analysisContainer);
+            }
+            
+            // Click to open patient details drawer
+            item.addEventListener("click", (e) => {
+                e.stopPropagation();
+                openPatientDrawer(pat);
+                resultsContainer.classList.add("hidden");
+            });
+            
+            resultsContainer.appendChild(item);
+        });
+        
+        resultsContainer.classList.remove("hidden");
+    };
+
+    searchInput.addEventListener("input", updateDropdown);
+    searchInput.addEventListener("focus", updateDropdown);
+
+    // Close on click outside
+    document.addEventListener("click", (e) => {
+        if (!searchInput.contains(e.target) && !resultsContainer.contains(e.target)) {
+            resultsContainer.classList.add("hidden");
+        }
+    });
+
+    // Close on Escape key
+    searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            resultsContainer.classList.add("hidden");
+            searchInput.blur();
+        }
+    });
+}
+
+// --- Bilingual Patient Search & Case Aggregator Portal ---
+
+const BILINGUAL_LABELS = {
+    name: "Patient Name / اسم المريض",
+    id: "National ID / رقم الهوية",
+    file: "File Number / رقم الملف",
+    clinic: "Clinic / العيادة",
+    visitDate: "Clinic Visit Date / تاريخ زيارة العيادة",
+    division: "Division / القسم",
+    diagnosis: "Diagnosis / التشخيص",
+    coordinator: "Coordinator / المنسق",
+    mobile: "Mobile Number / رقم الهاتف",
+    physician: "Treating Physician / الطبيب المعالج",
+    referralType: "Referral Type / نوع الإحالة",
+    referralForms: "Referral Forms Sent / استمارات الإحالة المرسلة",
+    permitSent: "Permit Form Sent / إرسال طلب التصريح",
+    otherAppt: "Other Appointments / المواعيد الأخرى",
+    guidance: "Guidance Completed / إتمام توجيه المريض",
+    treatmentPlan: "Treatment Plan / خطة العلاج",
+    ncm: "New Cases Meeting / اجتماع الحالات الجديدة",
+    ncmDecision: "NCM Decision / قرار اللجنة",
+    treatmentReferralStatus: "Treatment Referral Status / حالة إحالة العلاج",
+    otherReferralStatus: "Other Referral Status / حالة الإحالات الأخرى",
+    permitStatus: "Permit Status / حالة التصريح",
+    chemoDate: "Chemotherapy Appointment Date / موعد العلاج الكيماوي",
+    notified: "Patient Notified / إبلاغ المريض",
+    notifiedOther: "Notified of Other Appts / إبلاغ المريض بالمواعيد الأخرى",
+    barrier: "Current Barrier or Issue / العائق أو المشكلة الحالية",
+    notes: "Notes / الملاحظات",
+    status: "Case Status / حالة الملف"
+};
+
+function getPhoneticOutline(str) {
+    if (!str) return "";
+    let s = str.toLowerCase().trim();
+    
+    // Map Arabic characters to English counterparts
+    const arabicMap = {
+        'أ': 'a', 'إ': 'a', 'آ': 'a', 'ء': 'a', 'ؤ': 'a', 'ئ': 'a', 'ى': 'y', 'ي': 'y', 'ع': 'a', 'ا': 'a',
+        'ب': 'b',
+        'ت': 't', 'ة': 't', 'ط': 't',
+        'ث': 's', 'س': 's', 'ش': 's', 'ص': 's',
+        'ج': 'j',
+        'ح': 'h', 'خ': 'h', 'ه': 'h',
+        'د': 'd', 'ض': 'd', 'ذ': 'd', 'ظ': 'd',
+        'ر': 'r',
+        'ز': 'z',
+        'ف': 'f',
+        'ق': 'k', 'ك': 'k',
+        'ل': 'l',
+        'م': 'm',
+        'ن': 'n',
+        'و': 'w'
+    };
+    
+    let transliterated = "";
+    for (let i = 0; i < s.length; i++) {
+        const char = s[i];
+        if (arabicMap[char]) {
+            transliterated += arabicMap[char];
+        } else {
+            transliterated += char;
+        }
+    }
+    
+    // Normalize English consonants
+    transliterated = transliterated
+        .replace(/kh/g, 'h')
+        .replace(/sh/g, 's')
+        .replace(/th/g, 't')
+        .replace(/ph/g, 'f')
+        .replace(/gh/g, 'g')
+        .replace(/c/g, 'k')
+        .replace(/q/g, 'k')
+        .replace(/x/g, 'ks');
+        
+    // Strip vowels [aeiouyw] - treat w and y as vowels for phonetic outline
+    transliterated = transliterated.replace(/[aeiouyw]/g, '');
+    
+    // Collapse consecutive duplicate characters
+    let collapsed = "";
+    for (let i = 0; i < transliterated.length; i++) {
+        if (i === 0 || transliterated[i] !== transliterated[i - 1]) {
+            collapsed += transliterated[i];
+        }
+    }
+    
+    return collapsed.replace(/[^a-z0-9]/g, '');
+}
+
+function groupPatients(patients) {
+    const groups = {};
+    
+    patients.forEach(pat => {
+        const id = getPatientVal(pat, 'id').trim();
+        const file = getPatientVal(pat, 'file').trim();
+        const name = getPatientVal(pat, 'name').trim();
+        
+        let key = "";
+        if (id && id !== "0" && id !== "0.0") {
+            key = "ID_" + id;
+        } else if (file && file !== "0" && file !== "0.0") {
+            key = "FILE_" + file;
+        } else {
+            key = "NAME_" + name;
+        }
+        
+        if (!groups[key]) {
+            groups[key] = {
+                name: name,
+                id: id,
+                file: file,
+                records: []
+            };
+        }
+        groups[key].records.push(pat);
+    });
+    
+    for (const key in groups) {
+        groups[key].records.sort((a, b) => {
+            const dateA = getPatientVal(a, 'visitDate');
+            const dateB = getPatientVal(b, 'visitDate');
+            if (!dateA) return 1;
+            if (!dateB) return -1;
+            return dateB.localeCompare(dateA); // Descending (most recent first)
+        });
+    }
+    
+    return Object.values(groups);
+}
+
+function getInitials(name) {
+    if (!name) return "P";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+        const first = parts[0][0] || "";
+        const last = parts[parts.length - 1][0] || "";
+        return (first + last).toUpperCase();
+    }
+    return name[0].toUpperCase();
+}
+
+function renderPatientSearchResults() {
+    const searchInput = document.getElementById("patient-search-input");
+    const container = document.getElementById("patient-search-results-container");
+    if (!container) return;
+    
+    const query = searchInput ? searchInput.value.toLowerCase().trim() : "";
+    
+    if (query.length < 1) {
+        container.innerHTML = `
+            <div class="search-empty-state">
+                <div class="empty-icon"><i class="fa-solid fa-user-magnifying-glass"></i></div>
+                <h3>Search Patient Database / ابدأ البحث في قاعدة بيانات المرضى</h3>
+                <p>Enter the patient's name (in Arabic or English), National ID, or File Number to search across all records and referral states.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const phoneticQuery = getPhoneticOutline(query);
+    const matches = patientsData.filter(pat => {
+        const name = getPatientVal(pat, 'name').toLowerCase();
+        const id = getPatientVal(pat, 'id').toLowerCase();
+        const file = getPatientVal(pat, 'file').toLowerCase();
+        
+        if (name.includes(query) || id.includes(query) || file.includes(query)) {
+            return true;
+        }
+        
+        if (phoneticQuery && phoneticQuery.length > 1) {
+            const phoneticName = getPhoneticOutline(name);
+            if (phoneticName.includes(phoneticQuery)) {
+                return true;
+            }
+        }
+        
+        return false;
+    });
+    
+    if (matches.length === 0) {
+        container.innerHTML = `
+            <div class="search-empty-state">
+                <div class="empty-icon"><i class="fa-solid fa-circle-xmark text-danger"></i></div>
+                <h3>No Results Found / لم يتم العثور على نتائج</h3>
+                <p>We couldn't find any patients matching "${query}". Please check your search term or try another query.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const grouped = groupPatients(matches);
+    grouped.sort((a, b) => a.name.localeCompare(b.name));
+    
+    container.innerHTML = "";
+    
+    grouped.forEach((group, groupIdx) => {
+        const currentCaseStatus = group.records[0] ? getPatientVal(group.records[0], 'status') : '';
+        
+        // Build unique warnings across all records
+        const uniqueWarnings = [];
+        const seenWarningTitles = new Set();
+        group.records.forEach(pat => {
+            const notes = getSmartNotes(pat);
+            notes.forEach(note => {
+                if (!seenWarningTitles.has(note.title)) {
+                    seenWarningTitles.add(note.title);
+                    uniqueWarnings.push(note);
+                }
+            });
+        });
+        
+        let totalWarningsHtml = "";
+        if (uniqueWarnings.length > 0) {
+            totalWarningsHtml = `
+            <div class="patient-profile-analysis-summary">
+                <span class="profile-analysis-title"><i class="fa-solid fa-lightbulb text-indigo"></i> Smart Analysis Summary / ملخص التحليل الذكي:</span>
+                <div class="profile-analysis-chips">
+                    ${uniqueWarnings.map(note => `
+                        <span class="smart-note-chip sn-${note.level}" data-tooltip="${note.description}">
+                            <i class="${note.icon}"></i> ${note.chipText || note.title}
+                        </span>
+                    `).join('')}
+                </div>
+            </div>
+            `;
+        } else {
+            totalWarningsHtml = `
+            <div class="patient-profile-analysis-summary">
+                <span class="profile-analysis-title"><i class="fa-solid fa-lightbulb text-green"></i> Smart Analysis / التحليل الذكي:</span>
+                <div class="profile-analysis-chips">
+                    <span class="smart-note-chip sn-ok" data-tooltip="All coordination steps are clear. No warnings. / جميع خطوات التنسيق سليمة. لا توجد تنبيهات.">
+                        <i class="fa-solid fa-circle-check"></i> Clean / سليم
+                    </span>
+                </div>
+            </div>
+            `;
+        }
+        
+        // Build cases HTML
+        const casesHtml = group.records.map((pat, idx) => {
+            const isCurrent = idx === 0;
+            const visitDate = getPatientVal(pat, 'visitDate');
+            const clinic = getPatientVal(pat, 'clinic');
+            const division = getPatientVal(pat, 'division');
+            const physician = getPatientVal(pat, 'physician');
+            const coordinator = getPatientVal(pat, 'coordinator');
+            const referralStatus = getPatientVal(pat, 'treatmentReferralStatus');
+            const permitStatus = getPatientVal(pat, 'permitStatus');
+            const chemoDate = getPatientVal(pat, 'chemoDate');
+            const caseStatus = getPatientVal(pat, 'status');
+            const caseId = `case_${groupIdx}_${idx}`;
+            
+            let fullDataGridHtml = "";
+            for (const [key, label] of Object.entries(BILINGUAL_LABELS)) {
+                const val = getPatientVal(pat, key);
+                let highlightClass = "";
+                
+                if (key === 'barrier' && hasActiveBarrier(pat)) {
+                    highlightClass = "highlight-danger";
+                } else if (key === 'chemoDate' && val && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                    highlightClass = "highlight-success";
+                } else if (key === 'treatmentReferralStatus' && val.toLowerCase() === 'pending') {
+                    highlightClass = "highlight-danger";
+                }
+                
+                fullDataGridHtml += `
+                <div class="data-field ${highlightClass}">
+                    <span class="data-label">${label}</span>
+                    <span class="data-value">${val || '-'}</span>
+                </div>
+                `;
+            }
+            
+            return `
+            <div class="case-card ${isCurrent ? 'current-case' : ''}">
+                <div class="case-card-header">
+                    <div class="case-title">
+                        <i class="fa-solid fa-file-medical text-indigo"></i>
+                        Referral Case #${group.records.length - idx} / إحالة رقم ${group.records.length - idx}
+                        ${isCurrent ? `<span class="case-current-badge">Current Case / الحالي</span>` : ''}
+                    </div>
+                    <div class="case-date">
+                        <i class="fa-solid fa-calendar-day"></i> Visit Date / تاريخ الزيارة: ${visitDate || 'N/A'}
+                    </div>
+                </div>
+                <div class="case-card-body">
+                    <div class="case-field">
+                        <span class="label">Clinic / العيادة</span>
+                        <span class="value">${clinic || '-'}</span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Division / القسم</span>
+                        <span class="value">${division || '-'}</span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Treating Physician / الطبيب المعالج</span>
+                        <span class="value">${physician || '-'}</span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Coordinator / المنسق</span>
+                        <span class="value">${coordinator || '-'}</span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Referral Status / حالة إحالة العلاج</span>
+                        <span class="value"><span class="status-pill ${getPillClass(referralStatus)}">${referralStatus || '-'}</span></span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Permit Status / حالة التصريح</span>
+                        <span class="value"><span class="status-pill ${getPillClass(permitStatus)}">${permitStatus || '-'}</span></span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Chemo Date / تاريخ الكيماوي</span>
+                        <span class="value ${chemoDate ? 'text-green font-weight-bold' : ''}">${chemoDate || '-'}</span>
+                    </div>
+                    <div class="case-field">
+                        <span class="label">Case Status / حالة الملف</span>
+                        <span class="value"><span class="status-pill ${getPillClass(caseStatus)}">${caseStatus || '-'}</span></span>
+                    </div>
+                </div>
+                
+                <div class="case-card-footer">
+                    <div class="case-footer-left">
+                        <span class="profile-analysis-title">Coordination Pathway / مسار التنسيق:</span>
+                        ${generateMiniTimelineHTML(pat)}
+                    </div>
+                    <div class="case-footer-right">
+                        <button class="btn btn-secondary btn-sm toggle-details-btn" data-case-id="${caseId}">
+                            <i class="fa-solid fa-chevron-down"></i> Show Details / عرض التفاصيل
+                        </button>
+                        <button class="btn btn-primary btn-sm open-drawer-btn" data-case-id="${caseId}">
+                            <i class="fa-solid fa-folder-open"></i> Open Case / فتح السجل
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="patient-full-data-container hidden" id="details-${caseId}">
+                    <div class="patient-full-data-grid">
+                        ${fullDataGridHtml}
+                    </div>
+                </div>
+            </div>
+            `;
+        }).join('');
+        
+        const card = document.createElement("div");
+        card.className = "patient-profile-card glass-card";
+        card.innerHTML = `
+            <div class="patient-profile-header">
+                <div class="patient-avatar">
+                    ${getInitials(group.name)}
+                </div>
+                <div class="patient-profile-info">
+                    <div class="patient-profile-name-row">
+                        <h2>${group.name}</h2>
+                        <div class="patient-profile-badges">
+                            ${group.id ? `<span class="profile-badge id-badge"><i class="fa-solid fa-id-card"></i> ID: ${group.id}</span>` : ''}
+                            ${group.file ? `<span class="profile-badge file-badge"><i class="fa-solid fa-folder-open"></i> File: ${group.file}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="patient-profile-status-row">
+                        <div class="status-summary-item">
+                            <span class="label">Total Referral Records / إجمالي سجلات الإحالة:</span>
+                            <span class="count-badge">${group.records.length}</span>
+                        </div>
+                        <div class="status-summary-item">
+                            <span class="label">Current Status / الحالة الحالية:</span>
+                            <span class="status-pill ${getPillClass(currentCaseStatus)}">${currentCaseStatus || 'Unknown'}</span>
+                        </div>
+                    </div>
+                </div>
+                ${totalWarningsHtml}
+            </div>
+            
+            <div class="patient-referrals-section">
+                <h3>Referral Records & Timelines / سجلات ومسارات الإحالة</h3>
+                <div class="case-cards-grid">
+                    ${casesHtml}
+                </div>
+            </div>
+        `;
+        
+        card.querySelectorAll(".toggle-details-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const caseId = btn.getAttribute("data-case-id");
+                const detailsContainer = card.querySelector(`#details-${caseId}`);
+                if (detailsContainer) {
+                    const isHidden = detailsContainer.classList.contains("hidden");
+                    if (isHidden) {
+                        detailsContainer.classList.remove("hidden");
+                        btn.innerHTML = `<i class="fa-solid fa-chevron-up"></i> Hide Details / إخفاء التفاصيل`;
+                    } else {
+                        detailsContainer.classList.add("hidden");
+                        btn.innerHTML = `<i class="fa-solid fa-chevron-down"></i> Show Details / عرض التفاصيل`;
+                    }
+                }
+            });
+        });
+        
+        card.querySelectorAll(".open-drawer-btn").forEach((btn, idx) => {
+            btn.addEventListener("click", () => {
+                const patRecord = group.records[idx];
+                openPatientDrawer(patRecord);
+            });
+        });
+        
+        container.appendChild(card);
+    });
+}
+
+function setupPatientSearch() {
+    const searchInput = document.getElementById("patient-search-input");
+    const searchBtn = document.getElementById("patient-search-btn");
+    
+    if (searchInput) {
+        searchInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") {
+                renderPatientSearchResults();
+            }
+        });
+        
+        searchInput.addEventListener("input", () => {
+            if (searchInput.value.trim().length === 0) {
+                renderPatientSearchResults();
+            }
+        });
+    }
+    
+    if (searchBtn) {
+        searchBtn.addEventListener("click", () => {
+            renderPatientSearchResults();
+        });
+    }
 }
 

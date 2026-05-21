@@ -39,6 +39,10 @@
                     <i class="fa-solid fa-users-viewfinder"></i>
                     <span>Master Registry</span>
                 </button>
+                <button class="nav-item" data-tab="patient-search" id="nav-patient-search">
+                    <i class="fa-solid fa-magnifying-glass-chart"></i>
+                    <span>Patient Search</span>
+                </button>
                 <button class="nav-item" data-tab="followup" id="nav-followup">
                     <i class="fa-solid fa-hourglass-half"></i>
                     <span>Pending Follow-ups</span>
@@ -224,10 +228,50 @@
 
                 <!-- 2. MASTER TRACKER TAB -->
                 <section class="tab-pane" id="tab-master">
+                    <!-- Coordination Funnel Summary Row -->
+                    <div class="funnel-container glass-card" id="master-funnel-row">
+                        <div class="funnel-step" data-step="registered">
+                            <span class="funnel-label">Total Registered</span>
+                            <span class="funnel-val" id="funnel-val-registered">0</span>
+                        </div>
+                        <div class="funnel-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+                        <div class="funnel-step" data-step="pending-referrals">
+                            <span class="funnel-label">Pending Referrals</span>
+                            <span class="funnel-val" id="funnel-val-pending">0</span>
+                        </div>
+                        <div class="funnel-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+                        <div class="funnel-step" data-step="ncm-review">
+                            <span class="funnel-label">NCM Review</span>
+                            <span class="funnel-val" id="funnel-val-ncm">0</span>
+                        </div>
+                        <div class="funnel-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+                        <div class="funnel-step" data-step="permit-stage">
+                            <span class="funnel-label">Permit Stage</span>
+                            <span class="funnel-val" id="funnel-val-permit">0</span>
+                        </div>
+                        <div class="funnel-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+                        <div class="funnel-step" data-step="chemo-scheduled">
+                            <span class="funnel-label">Chemo Scheduled</span>
+                            <span class="funnel-val" id="funnel-val-chemo">0</span>
+                        </div>
+                    </div>
+
                     <div class="filter-bar glass-card">
                         <div class="search-box">
                             <i class="fa-solid fa-magnifying-glass"></i>
-                            <input type="text" id="master-search-input" placeholder="Search by patient name, ID, or file number...">
+                            <input type="text" id="master-search-input" placeholder="Search by patient name, ID, or file number..." autocomplete="off">
+                            <div id="master-search-results" class="search-results-dropdown hidden"></div>
+                        </div>
+                        <div class="quick-filters-row">
+                            <span class="quick-filters-label">Quick Filters:</span>
+                            <div class="quick-filter-pills">
+                                <button class="pill-btn active" data-filter="all">All Patients</button>
+                                <button class="pill-btn" data-filter="barriers"><i class="fa-solid fa-triangle-exclamation"></i> Active Barriers</button>
+                                <button class="pill-btn" data-filter="pending-referrals"><i class="fa-solid fa-clock-rotate-left"></i> Pending Referrals</button>
+                                <button class="pill-btn" data-filter="ncm-cases"><i class="fa-solid fa-users"></i> NCM Review</button>
+                                <button class="pill-btn" data-filter="permit-stage"><i class="fa-solid fa-id-card-clip"></i> Permit Stage</button>
+                                <button class="pill-btn" data-filter="chemo-missing"><i class="fa-solid fa-hourglass-half"></i> Awaiting Chemo Date</button>
+                            </div>
                         </div>
                         <div class="filters-grid">
                             <div class="filter-group">
@@ -303,6 +347,33 @@
                                 <button class="btn btn-secondary btn-sm" id="prev-page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Previous</button>
                                 <button class="btn btn-secondary btn-sm" id="next-page-btn" disabled>Next <i class="fa-solid fa-chevron-right"></i></button>
                             </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2.5. PATIENT SEARCH TAB -->
+                <section class="tab-pane" id="tab-patient-search">
+                    <div class="filter-bar glass-card">
+                        <div class="search-box-large">
+                            <i class="fa-solid fa-magnifying-glass search-icon-large"></i>
+                            <input type="text" id="patient-search-input" placeholder="البحث عن مريض بالاسم (عربي/إنجليزي)، رقم الهوية، أو رقم الملف... / Search patient by name (Arabic/English), ID, or File..." autocomplete="off">
+                            <button class="btn btn-primary search-btn-large" id="patient-search-btn">
+                                <i class="fa-solid fa-magnifying-glass"></i> Search / بحث
+                            </button>
+                        </div>
+                        <div class="search-instructions">
+                            <span class="instruction-pill"><i class="fa-solid fa-language"></i> عربي / English</span>
+                            <span class="instruction-pill"><i class="fa-solid fa-id-card"></i> National ID / الهوية الوطنية</span>
+                            <span class="instruction-pill"><i class="fa-solid fa-folder-open"></i> File Number / رقم الملف</span>
+                        </div>
+                    </div>
+                    
+                    <div class="search-results-section" id="patient-search-results-container">
+                        <!-- Dynamic search results, grouped by patient, will render here -->
+                        <div class="search-empty-state">
+                            <div class="empty-icon"><i class="fa-solid fa-user-magnifying-glass"></i></div>
+                            <h3>Search Patient Database / ابدأ البحث في قاعدة بيانات المرضى</h3>
+                            <p>Enter the patient's name (in Arabic or English), National ID, or File Number to search across all records and referral states.</p>
                         </div>
                     </div>
                 </section>
@@ -871,7 +942,15 @@
             </button>
         </div>
         <div class="drawer-body">
-            
+            <!-- High-Alert Barrier Card -->
+            <div id="drawer-barrier-alert-card" class="drawer-barrier-alert-card hidden">
+                <div class="barrier-alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <div class="barrier-alert-content">
+                    <h4>Active Barrier Detected</h4>
+                    <p id="drawer-barrier-alert-text">-</p>
+                </div>
+            </div>
+
             <!-- Patient Status Summary Board -->
             <div class="drawer-status-board">
                 <div class="status-board-card">
@@ -901,6 +980,14 @@
                 </div>
             </div>
 
+            <!-- Patient Coordination Pathway (Vertical Timeline Stepper) -->
+            <div class="drawer-timeline-card drawer-card">
+                <h4><i class="fa-solid fa-route"></i> Patient Coordination Journey</h4>
+                <div id="drawer-patient-timeline" class="patient-timeline-stepper">
+                    <!-- Dynamic timeline steps will be generated here -->
+                </div>
+            </div>
+
             <!-- Grouped Demographics & Clinical Information Cards -->
             <div class="drawer-cards-grid">
                 
@@ -909,35 +996,35 @@
                     <h4><i class="fa-solid fa-hospital-user"></i> Patient Demographics</h4>
                     <div class="drawer-card-grid">
                         <div class="data-item">
-                            <span class="label">Clinic / Branch</span>
+                            <span class="label"><i class="fa-solid fa-hospital"></i> Clinic / Branch</span>
                             <span class="value" id="drawer-clinic">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Division</span>
+                            <span class="label"><i class="fa-solid fa-layer-group"></i> Division</span>
                             <span class="value" id="drawer-division">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Clinic Visit Date</span>
+                            <span class="label"><i class="fa-solid fa-calendar-day"></i> Clinic Visit Date</span>
                             <span class="value" id="drawer-clinic-visit">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Mobile Number</span>
+                            <span class="label"><i class="fa-solid fa-mobile-screen-button"></i> Mobile Number</span>
                             <span class="value" id="drawer-mobile">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Diagnosis & Oncology</span>
+                            <span class="label"><i class="fa-solid fa-stethoscope"></i> Diagnosis & Oncology</span>
                             <span class="value font-weight-bold text-indigo" id="drawer-diagnosis">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Overall Case Status</span>
+                            <span class="label"><i class="fa-solid fa-circle-info"></i> Overall Case Status</span>
                             <span class="value" id="drawer-case-status">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Attending Physician</span>
+                            <span class="label"><i class="fa-solid fa-user-doctor"></i> Attending Physician</span>
                             <span class="value" id="drawer-physician">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Coordinator Nurse</span>
+                            <span class="label"><i class="fa-solid fa-user-nurse"></i> Attending Coordinator Nurse</span>
                             <span class="value" id="drawer-coordinator">-</span>
                         </div>
                     </div>
@@ -948,31 +1035,31 @@
                     <h4><i class="fa-solid fa-receipt"></i> Referrals & NCM Meetings</h4>
                     <div class="drawer-card-grid">
                         <div class="data-item">
-                            <span class="label">Patient Referral Type</span>
+                            <span class="label"><i class="fa-solid fa-share-nodes"></i> Patient Referral Type</span>
                             <span class="value" id="drawer-referral-type">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Referral Forms Sent</span>
+                            <span class="label"><i class="fa-solid fa-file-invoice"></i> Referral Forms Sent</span>
                             <span class="value" id="drawer-referral-forms">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Treatment Referral Status</span>
+                            <span class="label"><i class="fa-solid fa-clipboard-check"></i> Treatment Referral Status</span>
                             <span class="value" id="drawer-treatment-referral-status">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Other Referral Status</span>
+                            <span class="label"><i class="fa-solid fa-clipboard-question"></i> Other Referral Status</span>
                             <span class="value" id="drawer-other-referral-status">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Is added to NCM?</span>
+                            <span class="label"><i class="fa-solid fa-users"></i> Is added to NCM?</span>
                             <span class="value" id="drawer-ncm-flag">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">NCM Decision</span>
+                            <span class="label"><i class="fa-solid fa-gavel"></i> NCM Decision</span>
                             <span class="value font-weight-bold text-indigo" id="drawer-ncm-decision">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Approved Treatment Plan</span>
+                            <span class="label"><i class="fa-solid fa-file-medical"></i> Approved Treatment Plan</span>
                             <span class="value" id="drawer-treatment-plan">-</span>
                         </div>
                     </div>
@@ -983,31 +1070,31 @@
                     <h4><i class="fa-solid fa-passport"></i> Logistics & Permits</h4>
                     <div class="drawer-card-grid">
                         <div class="data-item">
-                            <span class="label">Permit Request Sent?</span>
+                            <span class="label"><i class="fa-solid fa-paper-plane"></i> Permit Request Sent?</span>
                             <span class="value" id="drawer-permit-sent">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Permit Status</span>
+                            <span class="label"><i class="fa-solid fa-shield-halved"></i> Permit Status</span>
                             <span class="value" id="drawer-permit-status">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Patient Notified (Permit)</span>
+                            <span class="label"><i class="fa-solid fa-bell"></i> Patient Notified (Permit)</span>
                             <span class="value" id="drawer-patient-notified">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">First Chemo Session Date</span>
+                            <span class="label"><i class="fa-solid fa-calendar-check"></i> First Chemo Session Date</span>
                             <span class="value font-weight-bold text-green" id="drawer-chemo-date">-</span>
                         </div>
                         <div class="data-item">
-                            <span class="label">Other Appts & Dates</span>
+                            <span class="label"><i class="fa-solid fa-clock"></i> Other Appts & Dates</span>
                             <span class="value" id="drawer-other-appointment">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Patient Notified (Other Appts)</span>
+                            <span class="label"><i class="fa-solid fa-bell-concierge"></i> Patient Notified (Other Appts)</span>
                             <span class="value" id="drawer-patient-notified-other">-</span>
                         </div>
                         <div class="data-item col-span-2">
-                            <span class="label">Patient Guidance / Direction</span>
+                            <span class="label"><i class="fa-solid fa-compass"></i> Patient Guidance / Direction</span>
                             <span class="value" id="drawer-guidance">-</span>
                         </div>
                     </div>
