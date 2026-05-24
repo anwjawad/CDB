@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Oncology Patient Coordination & Monitoring System | Dashboard</title>
-    <meta name="description" content="Advanced platform to monitor and track oncology patient coordinates and referrals, directly synced with OneDrive Excel files.">
+    <meta name="description" content="Serverless dashboard for monitoring oncology patient coordination and referrals from locally uploaded Excel tracker files.">
     <!-- Google Fonts: Outfit for English/UI, Tajawal for Arabic -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -19,9 +19,10 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body class="dark-theme">
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     <div class="app-container">
         <!-- Sidebar Navigation -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
                 <i class="fa-solid fa-laptop-medical brand-icon"></i>
                 <div class="brand-text">
@@ -31,50 +32,62 @@
             </div>
             
             <nav class="sidebar-nav">
-                <button class="nav-item active" data-tab="overview" id="nav-overview">
-                    <i class="fa-solid fa-chart-line"></i>
-                    <span>Overview</span>
-                </button>
-                <button class="nav-item" data-tab="master" id="nav-master">
-                    <i class="fa-solid fa-users-viewfinder"></i>
-                    <span>Master Registry</span>
-                </button>
-                <button class="nav-item" data-tab="patient-search" id="nav-patient-search">
-                    <i class="fa-solid fa-magnifying-glass-chart"></i>
-                    <span>Patient Search</span>
-                </button>
-                <button class="nav-item" data-tab="followup" id="nav-followup">
-                    <i class="fa-solid fa-hourglass-half"></i>
-                    <span>Pending Follow-ups</span>
-                    <span class="badge badge-amber" id="badge-followup">0</span>
-                </button>
-                <button class="nav-item" data-tab="ncm" id="nav-ncm">
-                    <i class="fa-solid fa-user-doctor"></i>
-                    <span>New Cases Meeting</span>
-                    <span class="badge badge-indigo" id="badge-ncm">0</span>
-                </button>
-                <button class="nav-item" data-tab="inpatient" id="nav-inpatient">
-                    <i class="fa-solid fa-bed"></i>
-                    <span>Inpatients</span>
-                </button>
-                <button class="nav-item" data-tab="outpatient" id="nav-outpatient">
-                    <i class="fa-solid fa-house-medical-flag"></i>
-                    <span>Outpatients</span>
-                </button>
-                <button class="nav-item" data-tab="barriers" id="nav-barriers">
-                    <i class="fa-solid fa-circle-exclamation"></i>
-                    <span>Barriers & Issues</span>
-                    <span class="badge badge-danger" id="badge-barriers">0</span>
-                </button>
-                <button class="nav-item" data-tab="analytics" id="nav-analytics">
-                    <i class="fa-solid fa-microscope"></i>
-                    <span>Smart Analytics</span>
-                    <span class="badge badge-danger" id="badge-analytics">0</span>
-                </button>
-                <button class="nav-item" data-tab="settings" id="nav-settings">
-                    <i class="fa-solid fa-gear"></i>
-                    <span>Sync Settings</span>
-                </button>
+                <div class="nav-group">
+                    <span class="nav-group-label">Main</span>
+                    <button class="nav-item active" data-tab="overview" id="nav-overview" aria-current="page">
+                        <i class="fa-solid fa-chart-line"></i>
+                        <span>Overview</span>
+                    </button>
+                    <button class="nav-item" data-tab="master" id="nav-master">
+                        <i class="fa-solid fa-users-viewfinder"></i>
+                        <span>Master Registry</span>
+                    </button>
+                    <button class="nav-item" data-tab="patient-search" id="nav-patient-search">
+                        <i class="fa-solid fa-magnifying-glass-chart"></i>
+                        <span>Patient Search</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <span class="nav-group-label">Monitor</span>
+                    <button class="nav-item" data-tab="followup" id="nav-followup">
+                        <i class="fa-solid fa-hourglass-half"></i>
+                        <span>Pending Follow-ups</span>
+                        <span class="badge badge-amber" id="badge-followup">0</span>
+                    </button>
+                    <button class="nav-item" data-tab="ncm" id="nav-ncm">
+                        <i class="fa-solid fa-user-doctor"></i>
+                        <span>New Cases Meeting</span>
+                        <span class="badge badge-indigo" id="badge-ncm">0</span>
+                    </button>
+                    <button class="nav-item" data-tab="inpatient" id="nav-inpatient">
+                        <i class="fa-solid fa-bed"></i>
+                        <span>Inpatients</span>
+                    </button>
+                    <button class="nav-item" data-tab="outpatient" id="nav-outpatient">
+                        <i class="fa-solid fa-house-medical-flag"></i>
+                        <span>Outpatients</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <span class="nav-group-label">Issues</span>
+                    <button class="nav-item" data-tab="barriers" id="nav-barriers">
+                        <i class="fa-solid fa-circle-exclamation"></i>
+                        <span>Barriers & Issues</span>
+                        <span class="badge badge-danger" id="badge-barriers">0</span>
+                    </button>
+                    <button class="nav-item" data-tab="analytics" id="nav-analytics">
+                        <i class="fa-solid fa-microscope"></i>
+                        <span>Smart Analytics</span>
+                        <span class="badge badge-danger" id="badge-analytics">0</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <span class="nav-group-label">System</span>
+                    <button class="nav-item" data-tab="settings" id="nav-settings">
+                        <i class="fa-solid fa-gear"></i>
+                        <span>Sync Settings</span>
+                    </button>
+                </div>
             </nav>
 
             <div class="sidebar-footer">
@@ -93,19 +106,32 @@
                 </div>
             </div>
         </aside>
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
 
         <!-- Main Workspace Area -->
-        <main class="main-content">
+        <main class="main-content" id="main-content">
             <!-- Header Section -->
             <header class="header">
+                <button class="sidebar-toggle-btn" id="sidebar-toggle-btn" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
                 <div class="header-title">
+                    <span class="page-eyebrow">Clinical operations workspace</span>
                     <h1 id="page-main-heading">Oncology Patient Coordination Dashboard</h1>
-                    <p class="subtitle" id="system-status-msg">Last Updated: <span id="last-sync-time">Loading...</span></p>
+                    <div class="header-meta-row">
+                        <p class="subtitle" id="system-status-msg">Last Updated: <span id="last-sync-time">Loading...</span></p>
+                        <span class="header-status-chip"><i class="fa-solid fa-shield-halved"></i> Local processing</span>
+                        <span class="header-status-chip"><i class="fa-solid fa-table"></i> Excel tracker</span>
+                    </div>
                 </div>
                 <div class="header-actions">
-                    <label for="excel-file-upload" class="btn btn-primary sync-btn" style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                    <button class="btn btn-primary sync-btn" id="refresh-remote-header-btn" type="button">
+                        <i class="fa-solid fa-cloud-arrow-down"></i>
+                        <span>Refresh from OneDrive</span>
+                    </button>
+                    <label for="excel-file-upload" class="btn btn-secondary sync-btn">
                         <i class="fa-solid fa-file-excel"></i>
-                        <span>Upload Excel Tracker</span>
+                        <span>Manual Upload</span>
                     </label>
                     <input type="file" id="excel-file-upload" accept=".xlsx" style="display: none;">
                 </div>
@@ -115,8 +141,8 @@
             <div id="sync-loading-overlay" class="loading-overlay hidden">
                 <div class="loader-card">
                     <div class="spinner"></div>
-                    <h3>Processing and updating data from Excel file...</h3>
-                    <p>This process may take a few seconds to read the local spreadsheet and analyze the sheets.</p>
+                    <h3>Syncing and updating patient coordination data...</h3>
+                    <p>The dashboard downloads the latest OneDrive workbook, parses it locally, and refreshes the KPIs, tables, and analytics.</p>
                     <div class="progress-steps">
                         <div class="step active" id="step-connect"><i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file</div>
                         <div class="step" id="step-download"><i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS</div>
@@ -127,11 +153,11 @@
 
             <!-- Drag-and-drop or Initial Load Overlay -->
             <div id="initial-load-overlay" class="loading-overlay hidden">
-                <div class="loader-card" style="max-width: 500px; padding: 40px; text-align: center; border-radius: 24px;">
-                    <div class="kpi-icon icon-blue" style="font-size: 32px; margin: 0 auto 20px auto; width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(59, 130, 246, 0.1); color: #3b82f6;"><i class="fa-solid fa-file-excel"></i></div>
-                    <h2 style="margin-bottom: 10px; font-weight: 700; color: #f8fafc;">No Patient Data Loaded</h2>
-                    <p style="color: #94a3b8; margin-bottom: 25px; line-height: 1.6; font-size: 14px;">This serverless dashboard processes files entirely on your device. Please select your oncology patient coordination Excel tracker (.xlsx) to populate the dashboard.</p>
-                    <label for="excel-file-initial" class="btn btn-primary" style="cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; font-size: 15px; margin: 0 auto; border-radius: 12px;">
+                <div class="loader-card initial-load-card">
+                    <div class="initial-load-icon"><i class="fa-solid fa-file-excel"></i></div>
+                    <h2 class="initial-load-title">Waiting for OneDrive Tracker</h2>
+                    <p class="initial-load-description">The dashboard automatically loads the configured OneDrive sharing link when it opens. If direct browser access is blocked, use manual upload as a fallback.</p>
+                    <label for="excel-file-initial" class="btn btn-primary btn-file-primary">
                         <i class="fa-solid fa-upload"></i>
                         <span>Select Excel File (.xlsx)</span>
                     </label>
@@ -140,13 +166,48 @@
             </div>
 
             <!-- Toast Notifications -->
-            <div id="toast-container" class="toast-container"></div>
+            <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
             <!-- Workspace Tabs Content -->
             <div class="workspace-tabs-content">
                 
                 <!-- 1. OVERVIEW TAB -->
                 <section class="tab-pane active" id="tab-overview">
+                    <!-- Triage Banner -->
+                    <div class="triage-banner">
+                        <div class="triage-item triage-danger" id="triage-barriers" role="button" tabindex="0" aria-label="Active Barriers — click to view">
+                            <i class="fa-solid fa-circle-exclamation"></i>
+                            <div class="triage-item-content">
+                                <span class="triage-count" id="triage-count-barriers">—</span>
+                                <span class="triage-label">Active Barriers</span>
+                            </div>
+                            <span class="triage-action-btn">View →</span>
+                        </div>
+                        <div class="triage-item triage-warning" id="triage-missing-chemo" role="button" tabindex="0" aria-label="Missing Chemo Date — click to view">
+                            <i class="fa-solid fa-calendar-xmark"></i>
+                            <div class="triage-item-content">
+                                <span class="triage-count" id="triage-count-chemo">—</span>
+                                <span class="triage-label">Missing Chemo Date</span>
+                            </div>
+                            <span class="triage-action-btn">View →</span>
+                        </div>
+                        <div class="triage-item triage-info" id="triage-pending" role="button" tabindex="0" aria-label="Pending Referrals — click to view">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                            <div class="triage-item-content">
+                                <span class="triage-count" id="triage-count-pending">—</span>
+                                <span class="triage-label">Pending Referrals</span>
+                            </div>
+                            <span class="triage-action-btn">View →</span>
+                        </div>
+                        <div class="triage-item triage-ncm-color" id="triage-ncm-item" role="button" tabindex="0" aria-label="NCM Review — click to view">
+                            <i class="fa-solid fa-user-doctor"></i>
+                            <div class="triage-item-content">
+                                <span class="triage-count" id="triage-count-ncm-item">—</span>
+                                <span class="triage-label">NCM Review</span>
+                            </div>
+                            <span class="triage-action-btn">View →</span>
+                        </div>
+                    </div>
                     <!-- Cards Grid -->
                     <div class="kpi-grid">
                         <div class="kpi-card glass-card ripple">
@@ -154,6 +215,7 @@
                             <div class="kpi-data">
                                 <h3>Total Patients</h3>
                                 <p class="kpi-value" id="kpi-total-patients">0</p>
+                                <span class="kpi-context">Loaded records</span>
                             </div>
                         </div>
                         <div class="kpi-card glass-card ripple">
@@ -161,6 +223,7 @@
                             <div class="kpi-data">
                                 <h3>Active Patients</h3>
                                 <p class="kpi-value" id="kpi-active-patients">0</p>
+                                <span class="kpi-context">Currently open</span>
                             </div>
                         </div>
                         <div class="kpi-card glass-card ripple">
@@ -168,6 +231,7 @@
                             <div class="kpi-data">
                                 <h3>Pending Referrals</h3>
                                 <p class="kpi-value" id="kpi-pending-referrals">0</p>
+                                <span class="kpi-context">Needs review</span>
                             </div>
                         </div>
                         <div class="kpi-card glass-card ripple">
@@ -175,6 +239,7 @@
                             <div class="kpi-data">
                                 <h3>NCM Cases</h3>
                                 <p class="kpi-value" id="kpi-ncm-cases">0</p>
+                                <span class="kpi-context">Meeting queue</span>
                             </div>
                         </div>
                         <div class="kpi-card glass-card ripple">
@@ -182,6 +247,7 @@
                             <div class="kpi-data">
                                 <h3>Active Barriers</h3>
                                 <p class="kpi-value" id="kpi-active-barriers">0</p>
+                                <span class="kpi-context">Escalate first</span>
                             </div>
                         </div>
                     </div>
@@ -193,7 +259,7 @@
                                 <h3>Patient Distribution by Clinic & Division</h3>
                             </div>
                             <div class="chart-container">
-                                <canvas id="chart-clinic-division"></canvas>
+                                <canvas id="chart-clinic-division" role="img" aria-label="Bar chart: patient distribution by clinic and division"></canvas>
                             </div>
                         </div>
                         <div class="dashboard-card glass-card">
@@ -201,7 +267,7 @@
                                 <h3>Medical Referral Status</h3>
                             </div>
                             <div class="chart-container">
-                                <canvas id="chart-referral-status"></canvas>
+                                <canvas id="chart-referral-status" role="img" aria-label="Doughnut chart: medical referral status breakdown"></canvas>
                             </div>
                         </div>
                     </div>
@@ -212,7 +278,7 @@
                                 <h3>Patients by Diagnosis (Top 5)</h3>
                             </div>
                             <div class="chart-container">
-                                <canvas id="chart-diagnoses"></canvas>
+                                <canvas id="chart-diagnoses" role="img" aria-label="Bar chart: top 5 patient diagnoses"></canvas>
                             </div>
                         </div>
                         <div class="dashboard-card glass-card col-span-2">
@@ -220,7 +286,7 @@
                                 <h3>Cases by Assigned Coordinator</h3>
                             </div>
                             <div class="chart-container">
-                                <canvas id="chart-coordinators"></canvas>
+                                <canvas id="chart-coordinators" role="img" aria-label="Bar chart: case count by assigned coordinator"></canvas>
                             </div>
                         </div>
                     </div>
@@ -258,7 +324,8 @@
 
                     <div class="filter-bar glass-card">
                         <div class="search-box">
-                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                            <label for="master-search-input" class="sr-only">Search master registry by patient name, ID, or file number</label>
                             <input type="text" id="master-search-input" placeholder="Search by patient name, ID, or file number..." autocomplete="off">
                             <div id="master-search-results" class="search-results-dropdown hidden"></div>
                         </div>
@@ -323,17 +390,17 @@
                             <table class="data-table" id="patients-data-table">
                                 <thead>
                                     <tr>
-                                        <th data-sort="Patient Name">Patient Name <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="ID">ID <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Clinic">Clinic <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Division">Division <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Coordinator">Coordinator <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Primary Physician">Primary Physician <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Treatment Referral Status">Treatment Referral <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Permit Status">Permit Status <i class="fa-solid fa-sort"></i></th>
-                                        <th data-sort="Case Status">Case Status <i class="fa-solid fa-sort"></i></th>
-                                        <th><i class="fa-solid fa-lightbulb" style="color:var(--color-warning);"></i> Smart Analysis</th>
-                                        <th>Actions</th>
+                                        <th data-sort="Patient Name" aria-sort="none" scope="col">Patient Name <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="ID" aria-sort="none" scope="col">ID <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Clinic" aria-sort="none" scope="col">Clinic <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Division" aria-sort="none" scope="col">Division <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Coordinator" aria-sort="none" scope="col">Coordinator <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Primary Physician" aria-sort="none" scope="col">Primary Physician <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Treatment Referral Status" aria-sort="none" scope="col">Treatment Referral <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Permit Status" aria-sort="none" scope="col">Permit Status <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th data-sort="Case Status" aria-sort="none" scope="col">Case Status <i class="fa-solid fa-sort" aria-hidden="true"></i></th>
+                                        <th scope="col"><i class="fa-solid fa-lightbulb" style="color:var(--color-warning);" aria-hidden="true"></i> Smart Analysis</th>
+                                        <th scope="col">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="patients-table-body">
@@ -390,7 +457,8 @@
                     <div class="table-container glass-card margin-top-20">
                         <div class="table-actions">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="followup-search-input" class="sr-only">Search pending follow-up patients by name, ID, or file number</label>
                                 <input type="text" id="followup-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
                             <div class="table-buttons">
@@ -434,7 +502,8 @@
                     <div class="table-container glass-card margin-top-20">
                         <div class="table-actions">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="ncm-search-input" class="sr-only">Search new cases meeting patients by name, ID, or file number</label>
                                 <input type="text" id="ncm-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
                             <div class="table-buttons">
@@ -475,7 +544,8 @@
                         </div>
                         <div class="table-actions margin-top-20">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="inpatient-search-input" class="sr-only">Search inpatient cases by name, ID, or file number</label>
                                 <input type="text" id="inpatient-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
                             <div class="table-buttons">
@@ -515,7 +585,8 @@
                         </div>
                         <div class="table-actions margin-top-20">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="outpatient-search-input" class="sr-only">Search outpatient cases by name, ID, or file number</label>
                                 <input type="text" id="outpatient-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
                             <div class="table-buttons">
@@ -559,7 +630,8 @@
                     <div class="table-container glass-card margin-top-20">
                         <div class="table-actions">
                             <div class="search-box">
-                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="barriers-search-input" class="sr-only">Search active barriers by name, ID, or file number</label>
                                 <input type="text" id="barriers-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
                             <div class="table-buttons">
@@ -637,7 +709,8 @@
                     <!-- Analytics Search Filter Bar -->
                     <div class="filter-bar glass-card">
                         <div class="search-box">
-                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                            <label for="analytics-search-input" class="sr-only">Search all smart analytics lists by name, ID, or file number</label>
                             <input type="text" id="analytics-search-input" placeholder="Search all analysis lists below by name, ID, or file number...">
                         </div>
                     </div>
@@ -883,15 +956,28 @@
                     <div class="settings-grid">
                         <div class="settings-card glass-card">
                             <div class="card-header">
-                                <h3>Serverless Local Processing</h3>
+                                <h3>OneDrive Tracker Sync</h3>
                             </div>
                             <div class="card-body">
-                                <p class="settings-desc">This is a serverless static version of the dashboard running directly in your browser. All Excel processing is performed client-side using SheetJS. No data is sent to any server. Your data is cached locally in your browser's Secure LocalStorage.</p>
+                                <p class="settings-desc">This dashboard opens with the configured OneDrive sharing link, downloads the latest workbook, parses it locally using SheetJS, and refreshes automatically every 5 minutes while the page is open.</p>
+                                <div class="info-box margin-top-15">
+                                    <i class="fa-solid fa-circle-info"></i>
+                                    <p>For automatic sync, the OneDrive link must allow direct browser download. If Microsoft returns a permission page, use an "Anyone with the link can view" sharing link or upload a local copy.</p>
+                                </div>
                                 <div class="form-group margin-top-20">
-                                    <label>Load New Excel File:</label>
+                                    <label for="settings-url-input">Default OneDrive sharing link</label>
                                     <div class="input-with-button">
-                                        <label for="settings-file-upload" class="btn btn-primary" style="cursor: pointer; width: 100%; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                            <i class="fa-solid fa-file-excel"></i> Upload and Parse Coordination File
+                                        <input type="url" id="settings-url-input" readonly value="https://1drv.ms/x/c/18fa9d20cfad9d46/IQAs7EU-f7OiRomVmOE52jlaAQIiC6WHZIH1nZeM1_sVc_M?e=ESQPZq">
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary margin-top-20 w-100" id="refresh-remote-btn" type="button">
+                                    <i class="fa-solid fa-cloud-arrow-down"></i> Refresh Now from OneDrive
+                                </button>
+                                <div class="form-group margin-top-20">
+                                    <label>Manual fallback upload</label>
+                                    <div class="input-with-button">
+                                        <label for="settings-file-upload" class="btn btn-secondary btn-upload-block">
+                                            <i class="fa-solid fa-file-excel"></i> Upload Local Copy
                                         </label>
                                         <input type="file" id="settings-file-upload" accept=".xlsx" style="display: none;">
                                     </div>
@@ -907,7 +993,15 @@
                                 <table class="settings-table">
                                     <tr>
                                         <td>Storage Type:</td>
-                                        <td>HTML5 LocalStorage (Offline)</td>
+                                        <td>HTML5 LocalStorage cache</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Primary Source:</td>
+                                        <td>OneDrive sharing link</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Refresh Interval:</td>
+                                        <td>Every 5 minutes while open</td>
                                     </tr>
                                     <tr>
                                         <td>Data Cache Key:</td>
@@ -916,6 +1010,10 @@
                                     <tr>
                                         <td>Total Tracked Patient Fields:</td>
                                         <td>27 fields (including IDs)</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Data Location:</td>
+                                        <td>This device and browser profile only</td>
                                     </tr>
                                 </table>
                                 <button class="btn btn-secondary margin-top-20 w-100" id="reset-cache-btn">

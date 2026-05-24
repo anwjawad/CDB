@@ -7,6 +7,110 @@ let currentSort = { column: 'Patient Name', direction: 'asc' };
 let pagination = { currentPage: 1, pageSize: 25 };
 let currentQuickFilter = 'all';
 
+// --- App Configuration & Shared Utilities ---
+const STORAGE_KEYS = Object.freeze({
+    theme: "theme",
+    config: "dashboard_config",
+    data: "dashboard_static_data",
+    remoteMeta: "dashboard_remote_metadata"
+});
+
+const DEFAULT_ONEDRIVE_SHARE_URL = "https://1drv.ms/x/c/18fa9d20cfad9d46/IQAs7EU-f7OiRomVmOE52jlaAQIiC6WHZIH1nZeM1_sVc_M?e=ESQPZq";
+const REMOTE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+let remoteRefreshTimer = null;
+let isRemoteSyncing = false;
+let remoteRefreshEventsBound = false;
+
+const VALUE_ALIASES = Object.freeze({
+    yes: ["yes", "y", "true", "1", "نعم"],
+    no: ["no", "n", "false", "0", "0.0", "none", "لا"],
+    pending: ["pending", "on hold", "قيد الانتظار", "معلق"],
+    approved: ["approved", "active", "yes", "completed", "complete", "نعم", "موافق عليه", "تم التنسيق"],
+    rejected: ["rejected", "closed", "no", "لا", "مرفوض", "ملغي"],
+    treatment: ["treatment", "علاج"]
+});
+
+function normalizeValue(value) {
+    return String(value === undefined || value === null ? "" : value)
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+}
+
+function isEmptyLike(value) {
+    const normalized = normalizeValue(value);
+    return !normalized || normalized === "0" || normalized === "0.0" || normalized === "none" || normalized === "n/a" || normalized === "na";
+}
+
+function valueMatches(value, aliasGroup) {
+    const aliases = VALUE_ALIASES[aliasGroup] || [];
+    return aliases.includes(normalizeValue(value));
+}
+
+function isYesValue(value) { return valueMatches(value, "yes"); }
+function isNoValue(value) { return valueMatches(value, "no") || isEmptyLike(value); }
+function isPendingValue(value) { return valueMatches(value, "pending"); }
+function isApprovedValue(value) { return valueMatches(value, "approved"); }
+function isRejectedValue(value) { return valueMatches(value, "rejected"); }
+function isTreatmentValue(value) { return valueMatches(value, "treatment"); }
+function isValidDateValue(value) { return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim()); }
+
+function escapeHTML(value) {
+    return String(value === undefined || value === null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function getEscapedPatientVal(pat, type, fallback = "") {
+    const value = getPatientVal(pat, type);
+    return escapeHTML(value || fallback);
+}
+
+function readStorage(key, fallback = null) {
+    try {
+        return localStorage.getItem(key) ?? fallback;
+    } catch (err) {
+        console.warn(`Unable to read local storage key "${key}"`, err);
+        return fallback;
+    }
+}
+
+function writeStorage(key, value) {
+    try {
+        localStorage.setItem(key, value);
+        return true;
+    } catch (err) {
+        console.error(`Unable to write local storage key "${key}"`, err);
+        showToast("Browser storage is unavailable or full. Data was not cached.", "error");
+        return false;
+    }
+}
+
+function removeStorage(key) {
+    try {
+        localStorage.removeItem(key);
+        return true;
+    } catch (err) {
+        console.warn(`Unable to remove local storage key "${key}"`, err);
+        return false;
+    }
+}
+
+function ensureRuntimeDependencies() {
+    const missing = [];
+    if (typeof Chart === "undefined") missing.push("Chart.js");
+    if (typeof XLSX === "undefined") missing.push("SheetJS");
+    if (missing.length > 0) {
+        showToast(`Missing browser libraries: ${missing.join(", ")}. Check the network connection and reload.`, "error");
+        return false;
+    }
+    return true;
+}
+
 // --- Key Mapping Configuration for Excel Headers ---
 const KEY_MAP = {
     name: ['Patient Name', 'PatientName', 'اسم المريض'],
@@ -51,7 +155,7 @@ function getPatientVal(pat, type) {
 
 function hasActiveBarrier(pat) {
     const barrier = getPatientVal(pat, 'barrier').trim();
-    return barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no';
+    return !isEmptyLike(barrier) && !isNoValue(barrier);
 }
 
 function updateMasterFunnel() {
@@ -67,10 +171,10 @@ function updateMasterFunnel() {
         const permitSent = getPatientVal(pat, 'permitSent').toLowerCase().trim();
         const chemo = getPatientVal(pat, 'chemoDate').trim();
 
-        if (refStatus === 'pending' || refStatus === 'قيد الانتظار' || refStatus === 'معلق') pending++;
-        if (ncm === 'yes' || ncm === 'نعم') ncmCount++;
-        if (permitSent === 'yes' || permitSent === 'نعم') permitCount++;
-        if (chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo)) chemoScheduled++;
+        if (isPendingValue(refStatus)) pending++;
+        if (isYesValue(ncm)) ncmCount++;
+        if (isYesValue(permitSent)) permitCount++;
+        if (isValidDateValue(chemo)) chemoScheduled++;
     });
 
     const elRegistered = document.getElementById("funnel-val-registered");
@@ -89,22 +193,17 @@ function updateMasterFunnel() {
 function getTimelineSteps(pat) {
     const visitDate = getPatientVal(pat, 'visitDate').trim();
     const refStatusRaw = getPatientVal(pat, 'treatmentReferralStatus').trim();
-    const refStatus = refStatusRaw.toLowerCase();
     
     const ncmFlagRaw = getPatientVal(pat, 'ncm').trim();
-    const ncmFlag = ncmFlagRaw.toLowerCase();
     const ncmDecision = getPatientVal(pat, 'ncmDecision').trim();
     
     const permitSentRaw = getPatientVal(pat, 'permitSent').trim();
-    const permitSent = permitSentRaw.toLowerCase();
     const permitStatusRaw = getPatientVal(pat, 'permitStatus').trim();
-    const permitStatus = permitStatusRaw.toLowerCase();
     
     const chemoDate = getPatientVal(pat, 'chemoDate').trim();
-    const isChemoScheduled = chemoDate && /^\d{4}-\d{2}-\d{2}$/.test(chemoDate);
+    const isChemoScheduled = isValidDateValue(chemoDate);
     
     const notifiedRaw = getPatientVal(pat, 'notified').trim();
-    const notified = notifiedRaw.toLowerCase();
 
     // 1. Clinic Visit
     let step1 = { key: "V", title: "Clinic Visit", desc: "Patient visit record", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
@@ -121,15 +220,15 @@ function getTimelineSteps(pat) {
     // 2. Referral Submitted
     let step2 = { key: "R", title: "Referral Submitted", desc: "Treatment referral submitted to coordinator", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
     if (refStatusRaw) {
-        if (refStatus === 'pending') {
+        if (isPendingValue(refStatusRaw)) {
             step2.state = "pending";
             step2.desc = "Referral submitted, pending review";
             step2.icon = '<i class="fa-solid fa-spinner fa-spin"></i>';
-        } else if (refStatus === 'approved' || refStatus === 'yes' || refStatus === 'تم التنسيق' || refStatus === 'موافق عليه') {
+        } else if (isApprovedValue(refStatusRaw)) {
             step2.state = "completed";
             step2.desc = `Referral approved (${refStatusRaw})`;
             step2.icon = '<i class="fa-solid fa-circle-check"></i>';
-        } else if (refStatus === 'rejected' || refStatus === 'no' || refStatus === 'مرفوض') {
+        } else if (isRejectedValue(refStatusRaw)) {
             step2.state = "error";
             step2.desc = `Referral rejected (${refStatusRaw})`;
             step2.icon = '<i class="fa-solid fa-circle-xmark"></i>';
@@ -148,7 +247,7 @@ function getTimelineSteps(pat) {
 
     // 3. NCM Review
     let step3 = { key: "N", title: "NCM Review", desc: "New Cases Meeting review status", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
-    if (ncmFlag === 'yes' || ncmFlag === 'نعم') {
+    if (isYesValue(ncmFlagRaw)) {
         if (ncmDecision) {
             step3.state = "completed";
             step3.desc = `Decision: ${ncmDecision}`;
@@ -166,12 +265,12 @@ function getTimelineSteps(pat) {
 
     // 4. Permit Stage
     let step4 = { key: "P", title: "Permit Stage", desc: "Treatment permit clearance", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
-    if (permitSent === 'yes' || permitSent === 'نعم') {
-        if (permitStatus === 'approved' || permitStatus === 'موافق عليه' || permitStatus === 'تم التنسيق' || permitStatus === 'yes' || permitStatus === 'نعم') {
+    if (isYesValue(permitSentRaw)) {
+        if (isApprovedValue(permitStatusRaw)) {
             step4.state = "completed";
             step4.desc = `Permit approved: ${permitStatusRaw}`;
             step4.icon = '<i class="fa-solid fa-circle-check"></i>';
-        } else if (permitStatus === 'rejected' || permitStatus === 'مرفوض' || permitStatus === 'no' || permitStatus === 'لا') {
+        } else if (isRejectedValue(permitStatusRaw)) {
             step4.state = "error";
             step4.desc = `Permit rejected: ${permitStatusRaw}`;
             step4.icon = '<i class="fa-solid fa-circle-xmark"></i>';
@@ -205,7 +304,7 @@ function getTimelineSteps(pat) {
 
     // 6. Patient Notified
     let step6 = { key: "B", title: "Patient Notified", desc: "Patient informed of chemo appointment", state: "inactive", icon: '<i class="fa-solid fa-ellipsis"></i>' };
-    if (notified === 'yes' || notified === 'نعم') {
+    if (isYesValue(notifiedRaw)) {
         step6.state = "completed";
         step6.desc = "Patient notified successfully";
         step6.icon = '<i class="fa-solid fa-circle-check"></i>';
@@ -227,12 +326,12 @@ function getPatientNameHTML(pat) {
     if (hasActiveBarrier(pat)) {
         return `
             <div class="name-wrapper">
-                <span class="barrier-pulse-badge" title="Active Barrier: ${getPatientVal(pat, 'barrier')}"></span>
-                <strong>${name}</strong>
+                <span class="barrier-pulse-badge" title="Active Barrier: ${getEscapedPatientVal(pat, 'barrier')}"></span>
+                <strong>${escapeHTML(name)}</strong>
             </div>
         `;
     }
-    return `<strong>${name}</strong>`;
+    return `<strong>${escapeHTML(name)}</strong>`;
 }
 
 function generateMiniTimelineHTML(pat) {
@@ -396,6 +495,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function initApp() {
+    const dependenciesReady = ensureRuntimeDependencies();
     setupThemeToggle();
     setupTabSwitching();
     setupSyncButton();
@@ -408,10 +508,19 @@ function initApp() {
     setupPrinting();
     setupMasterSearchDropdown();
     setupPatientSearch();
-    
+    setupTriageBanner();
+    setupSidebarToggle();
+
     // Fetch configuration and initial data
     fetchConfig();
-    loadDashboardData();
+    if (dependenciesReady) {
+        loadDashboardData({ silent: true });
+        syncRemoteTracker({ showOverlay: true, reason: "initial" });
+        startRemoteAutoRefresh();
+    } else {
+        const lastSyncEl = document.getElementById("last-sync-time");
+        if (lastSyncEl) lastSyncEl.innerText = "Libraries unavailable";
+    }
 }
 
 // --- Theme Toggle ---
@@ -419,15 +528,17 @@ function setupThemeToggle() {
     const themeBtn = document.getElementById("theme-toggle-btn");
     
     // Check local storage or defaults
-    const currentTheme = localStorage.getItem("theme") || "dark";
+    const currentTheme = readStorage(STORAGE_KEYS.theme, "dark") || "dark";
     if (currentTheme === "light") {
         document.body.classList.remove("dark-theme");
         document.body.classList.add("light-theme");
         themeBtn.innerHTML = '<i class="fa-solid fa-sun"></i>';
+        themeBtn.setAttribute("aria-label", "Switch to Dark Mode");
     } else {
         document.body.classList.add("dark-theme");
         document.body.classList.remove("light-theme");
         themeBtn.innerHTML = '<i class="fa-solid fa-moon"></i>';
+        themeBtn.setAttribute("aria-label", "Switch to Light Mode");
     }
 
     themeBtn.addEventListener("click", () => {
@@ -435,15 +546,52 @@ function setupThemeToggle() {
             document.body.classList.remove("dark-theme");
             document.body.classList.add("light-theme");
             themeBtn.innerHTML = '<i class="fa-solid fa-sun"></i>';
-            localStorage.setItem("theme", "light");
+            themeBtn.setAttribute("aria-label", "Switch to Dark Mode");
+            writeStorage(STORAGE_KEYS.theme, "light");
         } else {
             document.body.classList.add("dark-theme");
             document.body.classList.remove("light-theme");
             themeBtn.innerHTML = '<i class="fa-solid fa-moon"></i>';
-            localStorage.setItem("theme", "dark");
+            themeBtn.setAttribute("aria-label", "Switch to Light Mode");
+            writeStorage(STORAGE_KEYS.theme, "dark");
         }
         // Redraw charts to update text colors
         updateChartsTheme();
+    });
+}
+
+// --- Collapsible Sidebar (mobile/tablet) ---
+function setupSidebarToggle() {
+    const toggleBtn = document.getElementById("sidebar-toggle-btn");
+    const overlay = document.getElementById("sidebar-overlay");
+    if (!toggleBtn || !overlay) return;
+
+    function openSidebar() {
+        document.body.classList.add("sidebar-open");
+        toggleBtn.setAttribute("aria-expanded", "true");
+        toggleBtn.setAttribute("aria-label", "Close navigation");
+    }
+
+    function closeSidebar() {
+        document.body.classList.remove("sidebar-open");
+        toggleBtn.setAttribute("aria-expanded", "false");
+        toggleBtn.setAttribute("aria-label", "Open navigation");
+    }
+
+    toggleBtn.addEventListener("click", () => {
+        if (document.body.classList.contains("sidebar-open")) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    });
+
+    overlay.addEventListener("click", closeSidebar);
+
+    document.querySelectorAll(".nav-item").forEach(item => {
+        item.addEventListener("click", () => {
+            if (window.innerWidth <= 1024) closeSidebar();
+        });
     });
 }
 
@@ -455,12 +603,18 @@ function setupTabSwitching() {
     navItems.forEach(item => {
         item.addEventListener("click", () => {
             const targetTab = item.getAttribute("data-tab");
-            
-            navItems.forEach(i => i.classList.remove("active"));
+
+            navItems.forEach(i => { i.classList.remove("active"); i.removeAttribute("aria-current"); });
             tabPanes.forEach(p => p.classList.remove("active"));
-            
+
             item.classList.add("active");
-            document.getElementById(`tab-${targetTab}`).classList.add("active");
+            item.setAttribute("aria-current", "page");
+            const targetPane = document.getElementById(`tab-${targetTab}`);
+            if (!targetPane) {
+                console.warn(`Tab pane not found for "${targetTab}"`);
+                return;
+            }
+            targetPane.classList.add("active");
             
             // Re-render specific tabs if needed
             if (targetTab === 'master') {
@@ -486,31 +640,53 @@ function setupTabSwitching() {
 
 // --- Load configuration (LocalStorage version) ---
 function fetchConfig() {
-    const cachedConfig = localStorage.getItem("dashboard_config") || "{}";
-    const config = JSON.parse(cachedConfig);
+    const cachedConfig = readStorage(STORAGE_KEYS.config, "{}") || "{}";
+    let config = {};
+    try {
+        config = JSON.parse(cachedConfig);
+    } catch (err) {
+        console.warn("Stored dashboard configuration is invalid and will be ignored.", err);
+        removeStorage(STORAGE_KEYS.config);
+    }
     const urlInput = document.getElementById("settings-url-input");
-    if (urlInput && config.onedrive_url) {
-        urlInput.value = config.onedrive_url;
+    const activeUrl = config.onedrive_url || DEFAULT_ONEDRIVE_SHARE_URL;
+    if (urlInput) {
+        urlInput.value = activeUrl;
     }
 
     const saveBtn = document.getElementById("save-url-btn");
     if (saveBtn) {
         saveBtn.addEventListener("click", () => {
-            const url = document.getElementById("settings-url-input").value;
+            const url = document.getElementById("settings-url-input").value.trim();
             if (!url) {
                 showToast("Please enter a valid URL", "error");
                 return;
             }
             const newConfig = { onedrive_url: url };
-            localStorage.setItem("dashboard_config", JSON.stringify(newConfig));
+            writeStorage(STORAGE_KEYS.config, JSON.stringify(newConfig));
             showToast("Settings saved successfully", "success");
+        });
+    }
+
+    const refreshBtn = document.getElementById("refresh-remote-btn");
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+            syncRemoteTracker({ showOverlay: true, reason: "manual" });
+        });
+    }
+    const headerRefreshBtn = document.getElementById("refresh-remote-header-btn");
+    if (headerRefreshBtn) {
+        headerRefreshBtn.addEventListener("click", () => {
+            syncRemoteTracker({ showOverlay: true, reason: "manual" });
         });
     }
 
     const resetCacheBtn = document.getElementById("reset-cache-btn");
     if (resetCacheBtn) {
         resetCacheBtn.addEventListener("click", () => {
-            localStorage.removeItem("dashboard_static_data");
+            const confirmed = window.confirm("Clear all locally cached dashboard data from this browser?");
+            if (!confirmed) return;
+            removeStorage(STORAGE_KEYS.data);
             showToast("Cache cleared! Reloading dashboard...", "info");
             setTimeout(() => {
                 window.location.reload();
@@ -519,10 +695,303 @@ function fetchConfig() {
     }
 }
 
-// --- Fetch Dashboard Data ---
-function loadDashboardData() {
+function getConfiguredShareUrl() {
+    const cachedConfig = readStorage(STORAGE_KEYS.config, "{}") || "{}";
+    try {
+        const config = JSON.parse(cachedConfig);
+        return config.onedrive_url || DEFAULT_ONEDRIVE_SHARE_URL;
+    } catch (err) {
+        return DEFAULT_ONEDRIVE_SHARE_URL;
+    }
+}
+
+function setSyncStepState(stepEl, state, html) {
+    if (!stepEl) return;
+    stepEl.className = `step ${state}`;
+    stepEl.innerHTML = html;
+}
+
+function showSyncOverlay(mode = "remote") {
+    const overlay = document.getElementById("sync-loading-overlay");
+    const stepConnect = document.getElementById("step-connect");
+    const stepDownload = document.getElementById("step-download");
+    const stepParse = document.getElementById("step-parse");
+
+    if (overlay) overlay.classList.remove("hidden");
+    if (mode === "remote") {
+        setSyncStepState(stepConnect, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Connecting to OneDrive shared tracker...');
+        setSyncStepState(stepDownload, "", '<i class="fa-solid fa-circle"></i> Downloading latest workbook');
+        setSyncStepState(stepParse, "", '<i class="fa-solid fa-circle"></i> Parsing worksheets and refreshing dashboard');
+    } else {
+        setSyncStepState(stepConnect, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file...');
+        setSyncStepState(stepDownload, "", '<i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS');
+        setSyncStepState(stepParse, "", '<i class="fa-solid fa-circle"></i> Calculating metrics and drawing dashboard');
+    }
+}
+
+function hideSyncOverlay() {
+    const overlay = document.getElementById("sync-loading-overlay");
+    if (overlay) overlay.classList.add("hidden");
+}
+
+function buildOneDriveDownloadCandidates(shareUrl) {
+    const candidates = [];
+    const addCandidate = (url) => {
+        if (url && !candidates.includes(url)) candidates.push(url);
+    };
+
+    try {
+        const encoded = btoa(unescape(encodeURIComponent(shareUrl)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+        addCandidate(`https://api.onedrive.com/v1.0/shares/u!${encoded}/root/content`);
+    } catch (err) {
+        console.warn("Unable to build OneDrive API sharing URL.", err);
+    }
+
+    try {
+        const direct = new URL(shareUrl);
+        direct.searchParams.set("download", "1");
+        direct.searchParams.set("cacheBust", String(Date.now()));
+        addCandidate(direct.toString());
+    } catch (err) {
+        addCandidate(`${shareUrl}${shareUrl.includes("?") ? "&" : "?"}download=1&cacheBust=${Date.now()}`);
+    }
+
+    return candidates;
+}
+
+async function fetchRemoteWorkbookArrayBuffer(shareUrl) {
+    const candidates = buildOneDriveDownloadCandidates(shareUrl);
+    let lastError = null;
+
+    for (const url of candidates) {
+        try {
+            const response = await fetch(url, {
+                method: "GET",
+                cache: "no-store",
+                redirect: "follow",
+                credentials: "include"
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const contentType = response.headers.get("content-type") || "";
+            const buffer = await response.arrayBuffer();
+            if (!buffer || buffer.byteLength < 1000) {
+                throw new Error("Downloaded file is empty or too small.");
+            }
+            return {
+                buffer,
+                sourceUrl: url,
+                contentType,
+                lastModified: response.headers.get("last-modified") || "",
+                etag: response.headers.get("etag") || ""
+            };
+        } catch (err) {
+            lastError = err;
+            console.warn("OneDrive workbook fetch failed for candidate:", url, err);
+        }
+    }
+
+    throw lastError || new Error("Unable to download the shared OneDrive workbook.");
+}
+
+function applyDashboardData(patients, lists, metadata, options = {}) {
+    patientsData = patients;
+    dropdownLists = lists;
+
+    const lastSyncTime = metadata.last_synced || new Date().toLocaleString("en-US", { hour12: true });
     const lastSyncEl = document.getElementById("last-sync-time");
-    const cachedData = localStorage.getItem("dashboard_static_data");
+    if (lastSyncEl) lastSyncEl.innerText = lastSyncTime;
+
+    const cachedData = {
+        patients: patientsData,
+        lists: dropdownLists,
+        metadata: {
+            ...metadata,
+            last_synced: lastSyncTime,
+            total_records: patientsData.length
+        }
+    };
+    writeStorage(STORAGE_KEYS.data, JSON.stringify(cachedData));
+
+    const initialOverlay = document.getElementById("initial-load-overlay");
+    if (initialOverlay) initialOverlay.classList.add("hidden");
+
+    populateFilterOptions();
+    calculateKPIs();
+    renderCharts();
+    applyFilters();
+    updateBadges();
+
+    if (options.toastMessage) {
+        showToast(options.toastMessage, options.toastType || "success");
+    }
+}
+
+function processWorkbook(workbook) {
+    const trackingSheet = workbook.Sheets["Tracking sheet"];
+    if (!trackingSheet) {
+        throw new Error("'Tracking sheet' worksheet not found in the workbook!");
+    }
+    if (!trackingSheet['!ref']) {
+        throw new Error("Tracking sheet is empty.");
+    }
+
+    const range = XLSX.utils.decode_range(trackingSheet['!ref']);
+    const rows = [];
+    for (let r = range.s.r; r <= range.e.r; r++) {
+        const row = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+            const cellRef = XLSX.utils.encode_cell({r: r, c: c});
+            const cell = trackingSheet[cellRef];
+            row.push(cell ? cell.v : "");
+        }
+        rows.push(row);
+    }
+
+    if (rows.length < 4) {
+        throw new Error("Tracking sheet does not have enough rows.");
+    }
+
+    let headerIdx = -1;
+    for (let i = 0; i < rows.length; i++) {
+        const firstCell = String(rows[i][0] || '').trim();
+        if (firstCell.includes("Patient Name") || firstCell.includes("اسم المريض") || firstCell.includes("Ø§Ø³Ù… Ø§Ù„Ù…Ø±ÙŠØ¶")) {
+            headerIdx = i;
+            break;
+        }
+    }
+    if (headerIdx === -1) {
+        headerIdx = Math.min(3, rows.length - 1);
+    }
+
+    const headers = rows[headerIdx].map((h, i) => String(h || '').trim() || `Column_${i}`);
+    const patients = [];
+
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || !row[0] || !String(row[0]).trim()) {
+            continue;
+        }
+        const pat = {};
+        for (let c = 0; c < headers.length; c++) {
+            const h = headers[c];
+            const val = row[c];
+            pat[h] = excelValueToString(val, h);
+        }
+        patients.push(pat);
+    }
+
+    const listsSheet = workbook.Sheets["Lists"];
+    const parsedLists = {};
+    if (listsSheet) {
+        const listRows = XLSX.utils.sheet_to_json(listsSheet, {header: 1});
+        if (listRows.length > 0) {
+            const listHeaders = listRows[0];
+            for (let c = 0; c < listHeaders.length; c++) {
+                const h = String(listHeaders[c] || '').trim();
+                if (!h) continue;
+                const values = [];
+                for (let r = 1; r < listRows.length; r++) {
+                    if (listRows[r] && listRows[r][c] !== undefined && listRows[r][c] !== null) {
+                        const cleanVal = cleanValueJS(listRows[r][c]);
+                        if (cleanVal) values.push(cleanVal);
+                    }
+                }
+                parsedLists[h] = values;
+            }
+        }
+    }
+
+    return { patients, lists: parsedLists };
+}
+
+async function syncRemoteTracker(options = {}) {
+    if (isRemoteSyncing || typeof XLSX === "undefined") return;
+    isRemoteSyncing = true;
+
+    const showOverlay = options.showOverlay !== false;
+    const shareUrl = getConfiguredShareUrl();
+    const stepConnect = document.getElementById("step-connect");
+    const stepDownload = document.getElementById("step-download");
+    const stepParse = document.getElementById("step-parse");
+    const refreshBtn = document.getElementById("refresh-remote-btn");
+    const headerSyncBtn = document.getElementById("refresh-remote-header-btn");
+
+    if (refreshBtn) refreshBtn.disabled = true;
+    if (headerSyncBtn) headerSyncBtn.disabled = true;
+    if (showOverlay) showSyncOverlay("remote");
+
+    try {
+        setSyncStepState(stepConnect, "completed", '<i class="fa-solid fa-circle-check"></i> OneDrive share link resolved');
+        setSyncStepState(stepDownload, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Downloading latest workbook...');
+        const remote = await fetchRemoteWorkbookArrayBuffer(shareUrl);
+        setSyncStepState(stepDownload, "completed", '<i class="fa-solid fa-circle-check"></i> Latest workbook downloaded');
+        setSyncStepState(stepParse, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Parsing worksheets and refreshing dashboard...');
+
+        const workbook = XLSX.read(new Uint8Array(remote.buffer), { type: "array", cellDates: true });
+        const { patients, lists } = processWorkbook(workbook);
+        const lastSyncTime = new Date().toLocaleString("en-US", { hour12: true });
+        const remoteMeta = {
+            source: "onedrive",
+            share_url: shareUrl,
+            source_url: remote.sourceUrl,
+            content_type: remote.contentType,
+            last_modified: remote.lastModified,
+            etag: remote.etag,
+            last_synced: lastSyncTime
+        };
+        writeStorage(STORAGE_KEYS.remoteMeta, JSON.stringify(remoteMeta));
+        applyDashboardData(patients, lists, remoteMeta, {
+            toastMessage: `OneDrive tracker synced. Loaded ${patients.length} records.`,
+            toastType: "success"
+        });
+        setSyncStepState(stepParse, "completed", '<i class="fa-solid fa-circle-check"></i> Dashboard updated from OneDrive');
+    } catch (err) {
+        console.error("OneDrive sync failed:", err);
+        if (!patientsData.length) {
+            const initialOverlay = document.getElementById("initial-load-overlay");
+            if (initialOverlay) initialOverlay.classList.remove("hidden");
+        }
+        showToast("Unable to sync the OneDrive shared file. Use the manual Excel upload fallback or check link permissions/CORS.", "error");
+    } finally {
+        isRemoteSyncing = false;
+        if (refreshBtn) refreshBtn.disabled = false;
+        if (headerSyncBtn) headerSyncBtn.disabled = false;
+        if (showOverlay) {
+            setTimeout(hideSyncOverlay, 700);
+        }
+    }
+}
+
+function startRemoteAutoRefresh() {
+    if (remoteRefreshTimer) {
+        clearInterval(remoteRefreshTimer);
+    }
+    remoteRefreshTimer = setInterval(() => {
+        syncRemoteTracker({ showOverlay: false, reason: "polling" });
+    }, REMOTE_REFRESH_INTERVAL_MS);
+
+    if (!remoteRefreshEventsBound) {
+        window.addEventListener("focus", () => {
+            syncRemoteTracker({ showOverlay: false, reason: "focus" });
+        });
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+                syncRemoteTracker({ showOverlay: false, reason: "visible" });
+            }
+        });
+        remoteRefreshEventsBound = true;
+    }
+}
+
+// --- Fetch Dashboard Data ---
+function loadDashboardData(options = {}) {
+    const lastSyncEl = document.getElementById("last-sync-time");
+    const cachedData = readStorage(STORAGE_KEYS.data);
     
     if (!cachedData) {
         // Show initial load overlay
@@ -530,7 +999,7 @@ function loadDashboardData() {
         if (initialOverlay) {
             initialOverlay.classList.remove("hidden");
         }
-        lastSyncEl.innerText = "No data loaded";
+        if (lastSyncEl) lastSyncEl.innerText = "Syncing OneDrive...";
         return;
     }
     
@@ -560,7 +1029,7 @@ function loadDashboardData() {
         applyFilters();
         updateBadges();
         
-        showToast("Patient data loaded from local storage", "success");
+        if (!options.silent) showToast("Patient data loaded from local storage", "success");
     } catch(err) {
         console.error("Local cache read error:", err);
         showToast("Failed to parse cached data. Please upload your file again.", "error");
@@ -583,6 +1052,15 @@ function setupSyncButton() {
                 }
             });
         }
+    });
+}
+
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = () => reject(new Error("Failed to read the file."));
+        reader.readAsArrayBuffer(file);
     });
 }
 
@@ -635,170 +1113,48 @@ function excelValueToString(val, headerName) {
 }
 
 // Main SheetJS Excel parsing logic
-function processUploadedExcel(file) {
-    const overlay = document.getElementById("sync-loading-overlay");
+async function processUploadedExcel(file) {
+    if (typeof XLSX === "undefined") {
+        showToast("SheetJS is unavailable. Excel files cannot be parsed until the library loads.", "error");
+        return;
+    }
+    if (!file || !file.name.toLowerCase().endsWith(".xlsx")) {
+        showToast("Please upload a valid .xlsx Excel tracker.", "error");
+        return;
+    }
+
     const stepConnect = document.getElementById("step-connect");
     const stepDownload = document.getElementById("step-download");
     const stepParse = document.getElementById("step-parse");
-    
-    if (overlay) overlay.classList.remove("hidden");
-    if (stepConnect) {
-        stepConnect.className = "step active";
-        stepConnect.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file...';
+
+    showSyncOverlay("file");
+
+    try {
+        const arrayBuffer = await readFileAsArrayBuffer(file);
+        setSyncStepState(stepConnect, "completed", '<i class="fa-solid fa-circle-check"></i> Local file read successfully');
+        setSyncStepState(stepDownload, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Parsing worksheets using SheetJS...');
+
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array', cellDates: true });
+        const { patients, lists } = processWorkbook(workbook);
+
+        setSyncStepState(stepDownload, "completed", '<i class="fa-solid fa-circle-check"></i> Worksheets parsed successfully');
+        setSyncStepState(stepParse, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Calculating metrics and drawing dashboard...');
+
+        applyDashboardData(patients, lists, {
+            source: "manual-upload",
+            file_name: file.name,
+            last_synced: new Date().toLocaleString("en-US", { hour12: true })
+        }, {
+            toastMessage: `Data processed successfully! Loaded ${patients.length} records.`,
+            toastType: "success"
+        });
+        setSyncStepState(stepParse, "completed", '<i class="fa-solid fa-circle-check"></i> Dashboard updated');
+    } catch (err) {
+        console.error("Excel parse error:", err);
+        showToast("Failed to parse Excel file: " + err.message, "error");
+    } finally {
+        setTimeout(hideSyncOverlay, 700);
     }
-    if (stepDownload) {
-        stepDownload.className = "step";
-        stepDownload.innerHTML = '<i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS';
-    }
-    if (stepParse) {
-        stepParse.className = "step";
-        stepParse.innerHTML = '<i class="fa-solid fa-circle"></i> Calculating metrics and drawing dashboard';
-    }
-
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            if (stepConnect) {
-                stepConnect.className = "step completed";
-                stepConnect.innerHTML = '<i class="fa-solid fa-circle-check"></i> Local file read successfully';
-            }
-            if (stepDownload) {
-                stepDownload.className = "step active";
-                stepDownload.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Parsing worksheets using SheetJS...';
-            }
-
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, {type: 'array', cellDates: true});
-            
-            // 1. Parse Tracking Sheet
-            const trackingSheet = workbook.Sheets["Tracking sheet"];
-            if (!trackingSheet) {
-                throw new Error("'Tracking sheet' worksheet not found in the uploaded workbook!");
-            }
-            
-            const range = XLSX.utils.decode_range(trackingSheet['!ref']);
-            const rows = [];
-            for (let r = range.s.r; r <= range.e.r; r++) {
-                const row = [];
-                for (let c = range.s.c; c <= range.e.c; c++) {
-                    const cellRef = XLSX.utils.encode_cell({r: r, c: c});
-                    const cell = trackingSheet[cellRef];
-                    row.push(cell ? cell.v : "");
-                }
-                rows.push(row);
-            }
-            
-            if (rows.length < 4) {
-                throw new Error("Tracking sheet does not have enough rows.");
-            }
-            
-            let headerIdx = -1;
-            for (let i = 0; i < rows.length; i++) {
-                const firstCell = String(rows[i][0] || '').trim();
-                if (firstCell.includes("Patient Name") || firstCell.includes("اسم المريض")) {
-                    headerIdx = i;
-                    break;
-                }
-            }
-            if (headerIdx === -1) {
-                headerIdx = Math.min(3, rows.length - 1);
-            }
-            
-            const headers = rows[headerIdx].map((h, i) => String(h || '').trim() || `Column_${i}`);
-            const patients = [];
-            
-            for (let i = headerIdx + 1; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row || !row[0] || !String(row[0]).trim()) {
-                    continue; // Skip empty patient names
-                }
-                const pat = {};
-                for (let c = 0; c < headers.length; c++) {
-                    const h = headers[c];
-                    const val = row[c];
-                    pat[h] = excelValueToString(val, h);
-                }
-                patients.push(pat);
-            }
-            
-            // 2. Parse Lists Sheet (Dropdown items)
-            const listsSheet = workbook.Sheets["Lists"];
-            const parsedLists = {};
-            if (listsSheet) {
-                const listRows = XLSX.utils.sheet_to_json(listsSheet, {header: 1});
-                if (listRows.length > 0) {
-                    const listHeaders = listRows[0];
-                    for (let c = 0; c < listHeaders.length; c++) {
-                        const h = String(listHeaders[c] || '').trim();
-                        if (!h) continue;
-                        const values = [];
-                        for (let r = 1; r < listRows.length; r++) {
-                            if (listRows[r] && listRows[r][c] !== undefined && listRows[r][c] !== null) {
-                                const cleanVal = cleanValueJS(listRows[r][c]);
-                                if (cleanVal) values.push(cleanVal);
-                            }
-                        }
-                        parsedLists[h] = values;
-                    }
-                }
-            }
-
-            if (stepDownload) {
-                stepDownload.className = "step completed";
-                stepDownload.innerHTML = '<i class="fa-solid fa-circle-check"></i> Worksheets parsed successfully';
-            }
-            if (stepParse) {
-                stepParse.className = "step active";
-                stepParse.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Calculating metrics and drawing dashboard...';
-            }
-
-            setTimeout(() => {
-                // Update global data state
-                patientsData = patients;
-                dropdownLists = parsedLists;
-                
-                const lastSyncTime = new Date().toLocaleString("en-US", { hour12: true });
-                document.getElementById("last-sync-time").innerText = lastSyncTime;
-                
-                // Cache locally
-                const cachedData = {
-                    patients: patientsData,
-                    lists: dropdownLists,
-                    metadata: {
-                        last_synced: lastSyncTime,
-                        total_records: patientsData.length
-                    }
-                };
-                localStorage.setItem("dashboard_static_data", JSON.stringify(cachedData));
-
-                // Hide overlays
-                if (overlay) overlay.classList.add("hidden");
-                const initialOverlay = document.getElementById("initial-load-overlay");
-                if (initialOverlay) initialOverlay.classList.add("hidden");
-
-                // Initialize dashboard components
-                populateFilterOptions();
-                calculateKPIs();
-                renderCharts();
-                applyFilters();
-                updateBadges();
-
-                showToast(`Data processed successfully! Loaded ${patientsData.length} records.`, "success");
-            }, 800);
-
-        } catch (err) {
-            console.error("Excel parse error:", err);
-            if (overlay) overlay.classList.add("hidden");
-            showToast("Failed to parse Excel file: " + err.message, "error");
-        }
-    };
-    
-    reader.onerror = function() {
-        if (overlay) overlay.classList.add("hidden");
-        showToast("Failed to read the file.", "error");
-    };
-    
-    reader.readAsArrayBuffer(file);
 }
 
 // --- Populate Filter Dropdowns Dynamically ---
@@ -838,25 +1194,24 @@ function populateFilterOptions() {
 // --- Calculate KPIs ---
 function calculateKPIs() {
     const total = patientsData.length;
-    
+
     let active = 0;
     let pendingReferrals = 0;
     let ncmCount = 0;
     let activeBarriers = 0;
-    
+    let missingChemo = 0;
+
     patientsData.forEach(pat => {
-        const status = getPatientVal(pat, 'status').toLowerCase();
-        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase();
-        const barrier = getPatientVal(pat, 'barrier');
-        
+        const status = normalizeValue(getPatientVal(pat, 'status'));
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
+        const chemoDate = getPatientVal(pat, 'chemoDate');
+
         if (status === 'active' || status === 'نشط' || status === 'مستمر') active++;
-        if (refStatus === 'pending') pendingReferrals++;
-        if (ncm === 'yes' || ncm === 'نعم') ncmCount++;
-        
-        if (barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no') {
-            activeBarriers++;
-        }
+        if (isPendingValue(refStatus)) pendingReferrals++;
+        if (isYesValue(ncm)) ncmCount++;
+        if (hasActiveBarrier(pat)) activeBarriers++;
+        if (isApprovedValue(refStatus) && !isValidDateValue(chemoDate)) missingChemo++;
     });
 
     document.getElementById("kpi-total-patients").innerText = total;
@@ -865,6 +1220,33 @@ function calculateKPIs() {
     document.getElementById("kpi-ncm-cases").innerText = ncmCount;
     document.getElementById("kpi-active-barriers").innerText = activeBarriers;
     updateMasterFunnel();
+    updateTriageBanner(activeBarriers, missingChemo, pendingReferrals, ncmCount);
+}
+
+function updateTriageBanner(barriers, missingChemo, pendingReferrals, ncmCount) {
+    const el = id => document.getElementById(id);
+    if (el('triage-count-barriers'))  el('triage-count-barriers').innerText = barriers;
+    if (el('triage-count-chemo'))     el('triage-count-chemo').innerText = missingChemo;
+    if (el('triage-count-pending'))   el('triage-count-pending').innerText = pendingReferrals;
+    if (el('triage-count-ncm-item'))  el('triage-count-ncm-item').innerText = ncmCount;
+}
+
+function setupTriageBanner() {
+    const navTo = tab => document.querySelector(`.nav-item[data-tab="${tab}"]`);
+    const items = [
+        ['triage-barriers',     'barriers'],
+        ['triage-missing-chemo','analytics'],
+        ['triage-pending',      'followup'],
+        ['triage-ncm-item',     'ncm'],
+    ];
+    items.forEach(([id, tab]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('click', () => navTo(tab)?.click());
+        el.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navTo(tab)?.click(); }
+        });
+    });
 }
 
 // --- Update Badges in Sidebar ---
@@ -874,16 +1256,12 @@ function updateBadges() {
     let activeBarriers = 0;
     
     patientsData.forEach(pat => {
-        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase();
-        const barrier = getPatientVal(pat, 'barrier');
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
         
-        if (refStatus === 'pending') pendingReferrals++;
-        if (ncm === 'yes' || ncm === 'نعم') ncmCount++;
-        
-        if (barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no') {
-            activeBarriers++;
-        }
+        if (isPendingValue(refStatus)) pendingReferrals++;
+        if (isYesValue(ncm)) ncmCount++;
+        if (hasActiveBarrier(pat)) activeBarriers++;
     });
 
     document.getElementById("badge-followup").innerText = pendingReferrals;
@@ -971,15 +1349,17 @@ function setupFilterListeners() {
                 currentSort.direction = 'asc';
             }
             
-            // Update sort arrows UI
+            // Update sort arrows UI and aria-sort
             thElements.forEach(el => {
                 const icon = el.querySelector("i");
                 if (icon) icon.className = "fa-solid fa-sort";
+                el.setAttribute("aria-sort", "none");
             });
             const activeIcon = th.querySelector("i");
             if (activeIcon) {
                 activeIcon.className = currentSort.direction === 'asc' ? "fa-solid fa-sort-up" : "fa-solid fa-sort-down";
             }
+            th.setAttribute("aria-sort", currentSort.direction === 'asc' ? "ascending" : "descending");
             
             applyFilters();
         });
@@ -1016,20 +1396,15 @@ function applyFilters() {
         if (currentQuickFilter === 'barriers') {
             matchesQuickFilter = hasActiveBarrier(pat);
         } else if (currentQuickFilter === 'pending-referrals') {
-            const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
-            matchesQuickFilter = (refStatus === 'pending' || refStatus === 'قيد الانتظار' || refStatus === 'معلق');
+            matchesQuickFilter = isPendingValue(getPatientVal(pat, 'treatmentReferralStatus'));
         } else if (currentQuickFilter === 'ncm-cases') {
-            const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
-            matchesQuickFilter = (ncm === 'yes' || ncm === 'نعم');
+            matchesQuickFilter = isYesValue(getPatientVal(pat, 'ncm'));
         } else if (currentQuickFilter === 'permit-stage') {
-            const permitSent = getPatientVal(pat, 'permitSent').toLowerCase().trim();
-            matchesQuickFilter = (permitSent === 'yes' || permitSent === 'نعم');
+            matchesQuickFilter = isYesValue(getPatientVal(pat, 'permitSent'));
         } else if (currentQuickFilter === 'chemo-missing') {
-            const chemo = getPatientVal(pat, 'chemoDate').trim();
-            matchesQuickFilter = !chemo || !/^\d{4}-\d{2}-\d{2}$/.test(chemo);
+            matchesQuickFilter = !isValidDateValue(getPatientVal(pat, 'chemoDate'));
         } else if (currentQuickFilter === 'chemo-scheduled') {
-            const chemo = getPatientVal(pat, 'chemoDate').trim();
-            matchesQuickFilter = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo);
+            matchesQuickFilter = isValidDateValue(getPatientVal(pat, 'chemoDate'));
         }
         
         return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesQuickFilter;
@@ -1074,6 +1449,16 @@ function sortPatients() {
     });
 }
 
+function makeRowInteractive(row, pat) {
+    row.setAttribute("tabindex", "0");
+    row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openPatientDrawer(pat);
+        }
+    });
+}
+
 function renderMainTable() {
     const tbody = document.getElementById("patients-table-body");
     const countEl = document.getElementById("matching-records-count");
@@ -1082,7 +1467,7 @@ function renderMainTable() {
     tbody.innerHTML = "";
     
     if (filteredPatients.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align: center; padding: 30px; color: var(--text-muted);">No matching results found for the current filters.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11"><div class="table-empty-state"><i class="fa-solid fa-magnifying-glass"></i><h4>No matching patients</h4><p>Try adjusting your search or filters to find patients.</p></div></td></tr>`;
         updatePaginationUI(0);
         return;
     }
@@ -1110,14 +1495,14 @@ function renderMainTable() {
         row.setAttribute("data-patient-id", id);
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${id}</td>
-            <td>${clinic}</td>
-            <td>${division || '-'}</td>
-            <td>${coordinator}</td>
-            <td>${physician}</td>
-            <td><span class="status-pill ${getPillClass(treatmentRef)}">${treatmentRef || 'none'}</span></td>
-            <td><span class="status-pill ${getPillClass(permit)}">${permit || 'none'}</span></td>
-            <td><span class="status-pill ${getPillClass(status)}">${status || 'none'}</span></td>
+            <td>${escapeHTML(id)}</td>
+            <td>${escapeHTML(clinic)}</td>
+            <td>${escapeHTML(division || '-')}</td>
+            <td>${escapeHTML(coordinator)}</td>
+            <td>${escapeHTML(physician)}</td>
+            <td><span class="status-pill ${getPillClass(treatmentRef)}">${escapeHTML(treatmentRef || 'none')}</span></td>
+            <td><span class="status-pill ${getPillClass(permit)}">${escapeHTML(permit || 'none')}</span></td>
+            <td><span class="status-pill ${getPillClass(status)}">${escapeHTML(status || 'none')}</span></td>
             <td class="smart-notes-cell">
                 ${generateMiniTimelineHTML(pat)}
                 ${generateSmartNotesChips(pat)}
@@ -1131,11 +1516,10 @@ function renderMainTable() {
             e.stopPropagation();
             openPatientDrawer(pat);
         });
-        
-        row.addEventListener("click", () => {
-            openPatientDrawer(pat);
-        });
-        
+
+        row.addEventListener("click", () => { openPatientDrawer(pat); });
+        makeRowInteractive(row, pat);
+
         tbody.appendChild(row);
     });
 
@@ -1144,10 +1528,9 @@ function renderMainTable() {
 
 function getPillClass(val) {
     if (!val) return 'none';
-    const s = val.toLowerCase().trim();
-    if (s === 'approved' || s === 'active' || s === 'yes' || s === 'completed' || s === 'نعم' || s === 'موافق عليه' || s === 'تم التنسيق') return 'approved';
-    if (s === 'pending' || s === 'on hold' || s === 'قيد الانتظار' || s === 'معلق') return 'pending';
-    if (s === 'rejected' || s === 'closed' || s === 'no' || s === 'مرفوض' || s === 'لا' || s === 'ملغي') return 'rejected';
+    if (isApprovedValue(val)) return 'approved';
+    if (isPendingValue(val)) return 'pending';
+    if (isRejectedValue(val)) return 'rejected';
     return 'none';
 }
 
@@ -1202,7 +1585,7 @@ function renderFollowupTab() {
     const searchVal = document.getElementById("followup-search-input") ? document.getElementById("followup-search-input").value.toLowerCase() : "";
     
     const list = patientsData.filter(pat => {
-        const isPending = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase() === 'pending';
+        const isPending = isPendingValue(getPatientVal(pat, 'treatmentReferralStatus'));
         if (!isPending) return false;
         if (!searchVal) return true;
         
@@ -1213,7 +1596,7 @@ function renderFollowupTab() {
     });
     
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">No pending treatment referrals currently.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>No pending referrals</h4><p>All treatment referrals are resolved or none have been registered yet.</p></div></td></tr>`;
         return;
     }
 
@@ -1223,19 +1606,20 @@ function renderFollowupTab() {
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'physician')}</td>
-            <td>${getPatientVal(pat, 'treatmentPlan') || '-'}</td>
-            <td class="text-danger">${getPatientVal(pat, 'barrier') || '-'}</td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'physician')}</td>
+            <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
+            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier', '-')}</td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
             </td>
         `;
         row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
         row.addEventListener("click", () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody.appendChild(row);
     });
 }
@@ -1248,8 +1632,7 @@ function renderNcmTab() {
     const searchVal = document.getElementById("ncm-search-input") ? document.getElementById("ncm-search-input").value.toLowerCase() : "";
     
     const list = patientsData.filter(pat => {
-        const val = getPatientVal(pat, 'ncm').toLowerCase();
-        const isNcm = val === 'yes' || val === 'نعم';
+        const isNcm = isYesValue(getPatientVal(pat, 'ncm'));
         if (!isNcm) return false;
         if (!searchVal) return true;
         
@@ -1260,7 +1643,7 @@ function renderNcmTab() {
     });
     
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">No cases scheduled for the weekly meeting.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-user-doctor"></i><h4>No NCM cases</h4><p>No cases are scheduled for the weekly meeting.</p></div></td></tr>`;
         return;
     }
 
@@ -1270,20 +1653,21 @@ function renderNcmTab() {
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'physician')}</td>
-            <td>${getPatientVal(pat, 'treatmentPlan') || '-'}</td>
-            <td class="text-indigo"><strong>${getPatientVal(pat, 'ncmDecision') || '-'}</strong></td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getPatientVal(pat, 'status')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'physician')}</td>
+            <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
+            <td class="text-indigo"><strong>${getEscapedPatientVal(pat, 'ncmDecision', '-')}</strong></td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getEscapedPatientVal(pat, 'status')}</span></td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
             </td>
         `;
         row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
         row.addEventListener("click", () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody.appendChild(row);
     });
 }
@@ -1307,7 +1691,7 @@ function renderInpatientTab() {
     });
     
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">No inpatient cases currently registered in the system.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-bed"></i><h4>No inpatient cases</h4><p>No inpatient cases are currently registered in the system.</p></div></td></tr>`;
         return;
     }
 
@@ -1317,19 +1701,20 @@ function renderInpatientTab() {
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td class="text-green">${getPatientVal(pat, 'chemoDate') || '-'}</td>
-            <td class="text-danger">${getPatientVal(pat, 'barrier') || '-'}</td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getPatientVal(pat, 'status')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td class="text-green">${getEscapedPatientVal(pat, 'chemoDate', '-')}</td>
+            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier', '-')}</td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getEscapedPatientVal(pat, 'status')}</span></td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
             </td>
         `;
         row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
         row.addEventListener("click", () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody.appendChild(row);
     });
 }
@@ -1353,7 +1738,7 @@ function renderOutpatientTab() {
     });
     
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">No outpatient cases currently registered.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-house-medical-flag"></i><h4>No outpatient cases</h4><p>No outpatient cases are currently registered in the system.</p></div></td></tr>`;
         return;
     }
 
@@ -1363,19 +1748,20 @@ function renderOutpatientTab() {
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td class="text-green">${getPatientVal(pat, 'chemoDate') || '-'}</td>
-            <td class="text-danger">${getPatientVal(pat, 'barrier') || '-'}</td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getPatientVal(pat, 'status')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td class="text-green">${getEscapedPatientVal(pat, 'chemoDate', '-')}</td>
+            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier', '-')}</td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getEscapedPatientVal(pat, 'status')}</span></td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
             </td>
         `;
         row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
         row.addEventListener("click", () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody.appendChild(row);
     });
 }
@@ -1400,7 +1786,7 @@ function renderBarriersTab() {
     });
     
     if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">Great! No active barriers or coordination issues currently.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>All clear</h4><p>No active barriers or coordination issues currently.</p></div></td></tr>`;
         return;
     }
 
@@ -1410,19 +1796,20 @@ function renderBarriersTab() {
         row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
         row.innerHTML = `
             <td>${getPatientNameHTML(pat)}</td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td class="text-danger"><strong>${getPatientVal(pat, 'barrier')}</strong></td>
-            <td>${getPatientVal(pat, 'notes') || '-'}</td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getPatientVal(pat, 'treatmentReferralStatus')}</span></td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'permitStatus'))}">${getPatientVal(pat, 'permitStatus')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td class="text-danger"><strong>${getEscapedPatientVal(pat, 'barrier')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'notes', '-')}</td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getEscapedPatientVal(pat, 'treatmentReferralStatus')}</span></td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'permitStatus'))}">${getEscapedPatientVal(pat, 'permitStatus')}</span></td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
             </td>
         `;
         row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
         row.addEventListener("click", () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody.appendChild(row);
     });
 }
@@ -1522,7 +1909,7 @@ function openPatientDrawer(pat) {
     const barrierAlertText = document.getElementById("drawer-barrier-alert-text");
     const barrierContainer = document.getElementById("drawer-barrier-container");
     const barrierEl = document.getElementById("drawer-current-barrier");
-    if (barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no') {
+    if (hasActiveBarrier(pat)) {
         barrierEl.innerText = barrier;
         barrierEl.className = "barrier-value text-danger font-weight-bold";
         if (barrierAlertCard && barrierAlertText) {
@@ -1557,8 +1944,8 @@ function openPatientDrawer(pat) {
         item.innerHTML = `
             <div class="sni-icon"><i class="${note.icon}"></i></div>
             <div class="sni-text">
-                <strong>${note.title}</strong>
-                <p>${note.description}</p>
+                <strong>${escapeHTML(note.title)}</strong>
+                <p>${escapeHTML(note.description)}</p>
             </div>
         `;
         smartNotesList.appendChild(item);
@@ -1599,6 +1986,11 @@ function setupDrawerClose() {
 
 // --- Data Visualization (Chart.js) ---
 function renderCharts() {
+    if (typeof Chart === "undefined") {
+        showToast("Chart.js is unavailable. Charts cannot be rendered until the library loads.", "error");
+        return;
+    }
+
     // Destroy previous charts if they exist
     Object.values(charts).forEach(c => c.destroy());
     charts = {};
@@ -1625,7 +2017,16 @@ function renderCharts() {
     const outpatientData = clinicLabels.map(l => clinicsMap[l].outpatient);
     const otherDivData = clinicLabels.map(l => clinicsMap[l].other);
     
-    const ctxClinic = document.getElementById('chart-clinic-division').getContext('2d');
+    const clinicCanvas = document.getElementById('chart-clinic-division');
+    const referralCanvas = document.getElementById('chart-referral-status');
+    const diagnosesCanvas = document.getElementById('chart-diagnoses');
+    const coordinatorsCanvas = document.getElementById('chart-coordinators');
+    if (!clinicCanvas || !referralCanvas || !diagnosesCanvas || !coordinatorsCanvas) {
+        console.warn("One or more chart canvases are missing from the page.");
+        return;
+    }
+
+    const ctxClinic = clinicCanvas.getContext('2d');
     charts.clinic = new Chart(ctxClinic, {
         type: 'bar',
         data: {
@@ -1656,7 +2057,7 @@ function renderCharts() {
         refMap[ref] = (refMap[ref] || 0) + 1;
     });
     
-    const ctxRef = document.getElementById('chart-referral-status').getContext('2d');
+    const ctxRef = referralCanvas.getContext('2d');
     charts.referral = new Chart(ctxRef, {
         type: 'doughnut',
         data: {
@@ -1692,7 +2093,7 @@ function renderCharts() {
     const diagLabels = topDiag.map(x => x[0]);
     const diagCounts = topDiag.map(x => x[1]);
 
-    const ctxDiag = document.getElementById('chart-diagnoses').getContext('2d');
+    const ctxDiag = diagnosesCanvas.getContext('2d');
     charts.diagnoses = new Chart(ctxDiag, {
         type: 'bar',
         data: {
@@ -1724,7 +2125,7 @@ function renderCharts() {
         coordMap[coord] = (coordMap[coord] || 0) + 1;
     });
     
-    const ctxCoord = document.getElementById('chart-coordinators').getContext('2d');
+    const ctxCoord = coordinatorsCanvas.getContext('2d');
     charts.coordinators = new Chart(ctxCoord, {
         type: 'bar',
         data: {
@@ -1822,65 +2223,54 @@ function showToast(message, type = "info") {
 // --- Smart Analytics: Compute All 6 Counts ---
 function computeAnalyticsCounts() {
     const a1 = patientsData.filter(pat => {
-        const ref = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase();
-        return ref === 'pending' && (ncm === 'no' || ncm === '' || ncm === '0');
+        const ref = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
+        return isPendingValue(ref) && isNoValue(ncm);
     });
     const a2 = patientsData.filter(pat => {
-        const ref = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase();
-        return ref === 'pending' && ncm === 'yes';
+        const ref = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
+        return isPendingValue(ref) && isYesValue(ncm);
     });
     const a3 = patientsData.filter(pat => {
-        const sent = getPatientVal(pat, 'permitSent').toLowerCase();
-        const status = getPatientVal(pat, 'permitStatus').toLowerCase();
-        return sent === 'yes' && (status === 'pending' || status === '' || status === '0');
+        const sent = getPatientVal(pat, 'permitSent');
+        const status = getPatientVal(pat, 'permitStatus');
+        return isYesValue(sent) && (isPendingValue(status) || isEmptyLike(status));
     });
     const a4 = patientsData.filter(pat => {
         const forms = getPatientVal(pat, 'referralForms').toLowerCase();
-        const otherRef = getPatientVal(pat, 'otherReferralStatus').toLowerCase();
-        return forms && forms !== 'no' && forms !== '0' && otherRef === 'pending';
+        const otherRef = getPatientVal(pat, 'otherReferralStatus');
+        return !isEmptyLike(forms) && !isNoValue(forms) && isPendingValue(otherRef);
     });
     const a5 = patientsData.filter(pat => {
         const refType = getPatientVal(pat, 'referralType').toLowerCase();
-        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase();
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus');
         return (refType.includes('without') || refType.includes('evaluation') || refType.includes('follow up') || refType.includes('follow-up'))
-            && refStatus === 'pending';
+            && isPendingValue(refStatus);
     });
     const a6 = patientsData.filter(pat => {
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase();
+        const ncm = getPatientVal(pat, 'ncm');
         const chemo = getPatientVal(pat, 'chemoDate');
-        // A valid date looks like YYYY-MM-DD (10 chars, contains dashes)
-        const isValidDate = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo.trim());
-        return (ncm === 'yes' || ncm === 'نعم') && !isValidDate;
+        return isYesValue(ncm) && !isValidDateValue(chemo);
     });
     const a7 = patientsData.filter(pat => {
         const chemo = getPatientVal(pat, 'chemoDate');
-        const isValidDate = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo.trim());
-        const notified = getPatientVal(pat, 'notified').toLowerCase().trim();
-        return isValidDate && (notified === 'no' || notified === '' || notified === '0');
+        const notified = getPatientVal(pat, 'notified');
+        return isValidDateValue(chemo) && isNoValue(notified);
     });
     const a8 = patientsData.filter(pat => {
-        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
-        const refType = getPatientVal(pat, 'referralType').toLowerCase().trim();
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
+        const refType = getPatientVal(pat, 'referralType');
         const chemo = getPatientVal(pat, 'chemoDate');
-        const isValidDate = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo.trim());
-        return (refStatus === 'approved' || refStatus === 'موافق عليه') &&
-               (ncm === 'no' || ncm === '' || ncm === '0' || ncm === 'لا') &&
-               (refType === 'treatment' || refType === 'علاج') &&
-               !isValidDate;
+        return isApprovedValue(refStatus) && isNoValue(ncm) && isTreatmentValue(refType) && !isValidDateValue(chemo);
     });
     const a9 = patientsData.filter(pat => {
-        const refStatus = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
-        const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
-        const refType = getPatientVal(pat, 'referralType').toLowerCase().trim();
+        const refStatus = getPatientVal(pat, 'treatmentReferralStatus');
+        const ncm = getPatientVal(pat, 'ncm');
+        const refType = getPatientVal(pat, 'referralType');
         const chemo = getPatientVal(pat, 'chemoDate');
-        const isValidDate = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo.trim());
-        return (refStatus === 'approved' || refStatus === 'موافق عليه') &&
-               (ncm === 'yes' || ncm === 'نعم') &&
-               (refType === 'treatment' || refType === 'علاج') &&
-               !isValidDate;
+        return isApprovedValue(refStatus) && isYesValue(ncm) && isTreatmentValue(refType) && !isValidDateValue(chemo);
     });
     return { a1, a2, a3, a4, a5, a6, a7, a8, a9, total: a1.length + a2.length + a3.length + a4.length + a5.length + a6.length + a7.length + a8.length + a9.length };
 }
@@ -1932,7 +2322,7 @@ function renderAnalyticsTab() {
     document.getElementById('count-a8').innerText = a8.length;
     document.getElementById('count-a9').innerText = a9.length;
 
-    const emptyRow = (cols) => `<tr><td colspan="${cols}" style="text-align:center;padding:20px;color:var(--text-muted);"><i class="fa-solid fa-circle-check" style="color:var(--color-success);margin-right:6px;"></i> No cases match this filter</td></tr>`;
+    const emptyRow = (cols) => `<tr><td colspan="${cols}"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>No matches</h4><p>No cases match this filter.</p></div></td></tr>`;
 
     // --- Analysis 1: Pending + NCM = No/Empty ---
     const tbody1 = document.getElementById('analytics-tbody-1');
@@ -1942,18 +2332,19 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'treatmentPlan') || '-'}</td>
-            <td><span class="status-pill rejected">${getPatientVal(pat, 'ncm') || 'Empty'}</span></td>
-            <td class="text-danger">${getPatientVal(pat, 'barrier') || '-'}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
+            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'ncm', 'Empty')}</span></td>
+            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier', '-')}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody1.appendChild(row);
     });
 
@@ -1965,18 +2356,19 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'physician')}</td>
-            <td>${getPatientVal(pat, 'treatmentPlan') || '-'}</td>
-            <td class="text-indigo"><strong>${getPatientVal(pat, 'ncmDecision') || 'No Decision'}</strong></td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'physician')}</td>
+            <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
+            <td class="text-indigo"><strong>${getEscapedPatientVal(pat, 'ncmDecision', 'No Decision')}</strong></td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody2.appendChild(row);
     });
 
@@ -1989,17 +2381,18 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td><span class="status-pill approved">${getPatientVal(pat, 'permitSent')}</span></td>
-            <td><span class="status-pill pending">${permitStatus}</span></td>
-            <td>${getPatientVal(pat, 'notified') || '-'}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td><span class="status-pill approved">${getEscapedPatientVal(pat, 'permitSent')}</span></td>
+            <td><span class="status-pill pending">${escapeHTML(permitStatus)}</span></td>
+            <td>${getEscapedPatientVal(pat, 'notified', '-')}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody3.appendChild(row);
     });
 
@@ -2011,17 +2404,18 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'referralForms')}</td>
-            <td><span class="status-pill pending">${getPatientVal(pat, 'otherReferralStatus')}</span></td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getPatientVal(pat, 'treatmentReferralStatus') || '-'}</span></td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'referralForms')}</td>
+            <td><span class="status-pill pending">${getEscapedPatientVal(pat, 'otherReferralStatus')}</span></td>
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getEscapedPatientVal(pat, 'treatmentReferralStatus', '-')}</span></td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody4.appendChild(row);
     });
 
@@ -2033,17 +2427,18 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td style="color:var(--color-warning);font-weight:600;">${getPatientVal(pat, 'referralType')}</td>
-            <td><span class="status-pill pending">${getPatientVal(pat, 'treatmentReferralStatus')}</span></td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td style="color:var(--color-warning);font-weight:600;">${getEscapedPatientVal(pat, 'referralType')}</td>
+            <td><span class="status-pill pending">${getEscapedPatientVal(pat, 'treatmentReferralStatus')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody5.appendChild(row);
     });
 
@@ -2057,17 +2452,18 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td>${getPatientVal(pat, 'ncmDecision') || '-'}</td>
-            <td style="color:var(--color-warning);font-weight:600;">${chemoDisplay}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td>${getEscapedPatientVal(pat, 'ncmDecision', '-')}</td>
+            <td style="color:var(--color-warning);font-weight:600;">${escapeHTML(chemoDisplay)}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody6.appendChild(row);
     });
 
@@ -2079,17 +2475,18 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${getPatientVal(pat, 'diagnosis')}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td class="text-green">${getPatientVal(pat, 'chemoDate')}</td>
-            <td><span class="status-pill rejected">${getPatientVal(pat, 'notified') || 'Empty'}</span></td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td class="text-green">${getEscapedPatientVal(pat, 'chemoDate')}</td>
+            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'notified', 'Empty')}</span></td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody7.appendChild(row);
     });
 
@@ -2109,16 +2506,17 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${div || '-'}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td class="text-danger font-weight-bold">${actionMsg}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${escapeHTML(div || '-')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td class="text-danger font-weight-bold">${escapeHTML(actionMsg)}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody8.appendChild(row);
     });
 
@@ -2138,16 +2536,17 @@ function renderAnalyticsTab() {
         if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
         row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
         row.innerHTML = `
-            <td><strong>${getPatientVal(pat, 'name')}</strong></td>
-            <td>${getPatientVal(pat, 'id')}</td>
-            <td>${getPatientVal(pat, 'clinic')}</td>
-            <td>${div || '-'}</td>
-            <td>${getPatientVal(pat, 'coordinator')}</td>
-            <td class="text-danger font-weight-bold">${actionMsg}</td>
+            <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
+            <td>${getEscapedPatientVal(pat, 'id')}</td>
+            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
+            <td>${escapeHTML(div || '-')}</td>
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
+            <td class="text-danger font-weight-bold">${escapeHTML(actionMsg)}</td>
             <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
         `;
         row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
         row.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(row, pat);
         tbody9.appendChild(row);
     });
 }
@@ -2156,18 +2555,19 @@ function renderAnalyticsTab() {
 function getSmartNotes(pat) {
     const notes = [];
     
-    const ref = getPatientVal(pat, 'treatmentReferralStatus').toLowerCase().trim();
-    const ncm = getPatientVal(pat, 'ncm').toLowerCase().trim();
-    const sent = getPatientVal(pat, 'permitSent').toLowerCase().trim();
-    const permitStatus = getPatientVal(pat, 'permitStatus').toLowerCase().trim();
-    const forms = getPatientVal(pat, 'referralForms').toLowerCase().trim();
-    const otherRef = getPatientVal(pat, 'otherReferralStatus').toLowerCase().trim();
-    const refType = getPatientVal(pat, 'referralType').toLowerCase().trim();
+    const ref = getPatientVal(pat, 'treatmentReferralStatus');
+    const ncm = getPatientVal(pat, 'ncm');
+    const sent = getPatientVal(pat, 'permitSent');
+    const permitStatus = getPatientVal(pat, 'permitStatus');
+    const forms = getPatientVal(pat, 'referralForms');
+    const otherRef = getPatientVal(pat, 'otherReferralStatus');
+    const refType = getPatientVal(pat, 'referralType');
+    const normalizedRefType = normalizeValue(refType);
     const chemo = getPatientVal(pat, 'chemoDate');
     const barrier = getPatientVal(pat, 'barrier');
     
     // Rule 1: Pending + NCM = No/Empty
-    if (ref === 'pending' && (ncm === 'no' || ncm === '' || ncm === '0')) {
+    if (isPendingValue(ref) && isNoValue(ncm)) {
         notes.push({
             title: "NCM Required",
             description: "Treatment referral status is Pending but the case has not been presented in the New Cases Meeting (NCM = No/Empty). Please present the file in the next meeting.",
@@ -2178,7 +2578,7 @@ function getSmartNotes(pat) {
     }
     
     // Rule 2: Pending + NCM = Yes
-    if (ref === 'pending' && ncm === 'yes') {
+    if (isPendingValue(ref) && isYesValue(ncm)) {
         notes.push({
             title: "Awaiting NCM Decision",
             description: "Case has been presented in the New Cases Meeting (NCM = Yes) but treatment referral status remains Pending, awaiting final decision approval.",
@@ -2189,7 +2589,7 @@ function getSmartNotes(pat) {
     }
     
     // Rule 3: Permit Form Sent = Yes + Permit Status = Pending/Empty
-    if (sent === 'yes' && (permitStatus === 'pending' || permitStatus === '' || permitStatus === '0')) {
+    if (isYesValue(sent) && (isPendingValue(permitStatus) || isEmptyLike(permitStatus))) {
         notes.push({
             title: "Follow up Permit Request",
             description: "Permit application form was sent (Permit Sent = Yes) but status remains Pending/Empty. Please follow up for clearance.",
@@ -2200,7 +2600,7 @@ function getSmartNotes(pat) {
     }
     
     // Rule 4: Referral Forms Sent ≠ No + Other Referral Status = Pending
-    if (forms && forms !== 'no' && forms !== '0' && otherRef === 'pending') {
+    if (!isEmptyLike(forms) && !isNoValue(forms) && isPendingValue(otherRef)) {
         notes.push({
             title: "Follow up Other Referral",
             description: "Referral forms were sent but other referral status remains Pending.",
@@ -2211,7 +2611,7 @@ function getSmartNotes(pat) {
     }
     
     // Rule 5: Type = Without/Evaluation + Treatment Referral Status = Pending
-    if ((refType.includes('without') || refType.includes('evaluation') || refType.includes('follow up') || refType.includes('follow-up')) && ref === 'pending') {
+    if ((normalizedRefType.includes('without') || normalizedRefType.includes('evaluation') || normalizedRefType.includes('follow up') || normalizedRefType.includes('follow-up')) && isPendingValue(ref)) {
         notes.push({
             title: "Review Pending Referral Type",
             description: "Referral type is (Without / Follow-up / Evaluation) but treatment referral status is Pending. Please review medical file.",
@@ -2220,10 +2620,10 @@ function getSmartNotes(pat) {
             icon: "fa-solid fa-clipboard-question"
         });
     }
-    
+
     // Rule 6: NCM = Yes + Chemo Date invalid/empty
-    const isValidDate = chemo && /^\d{4}-\d{2}-\d{2}$/.test(chemo.trim());
-    if ((ncm === 'yes' || ncm === 'نعم') && !isValidDate) {
+    const isValidDate = isValidDateValue(chemo);
+    if (isYesValue(ncm) && !isValidDate) {
         notes.push({
             title: "Chemo Session Date Missing",
             description: "Case approved in the New Cases Meeting (NCM = Yes) but first chemotherapy session date is not scheduled yet.",
@@ -2234,8 +2634,8 @@ function getSmartNotes(pat) {
     }
 
     // Rule 7: Scheduled Chemo — Notification Pending
-    const notified = getPatientVal(pat, 'notified').toLowerCase().trim();
-    if (isValidDate && (notified === 'no' || notified === '' || notified === '0')) {
+    const notified = getPatientVal(pat, 'notified');
+    if (isValidDate && isNoValue(notified)) {
         notes.push({
             title: "Scheduled Chemo — Notification Pending",
             description: `Chemotherapy is scheduled for ${chemo} but the patient has not been notified yet.`,
@@ -2247,7 +2647,7 @@ function getSmartNotes(pat) {
 
     // Rule 8: Approved Referral (NCM = No) — Missing Chemo Appointment
     const division = getPatientVal(pat, 'division').toLowerCase().trim();
-    if ((ref === 'approved' || ref === 'موافق عليه') && (ncm === 'no' || ncm === '' || ncm === '0' || ncm === 'لا') && (refType === 'treatment' || refType === 'علاج') && !isValidDate) {
+    if (isApprovedValue(ref) && isNoValue(ncm) && isTreatmentValue(refType) && !isValidDate) {
         let hint = "No chemotherapy appointment has been booked yet by the oncology pharmacy/chemotherapy department.";
         if (division.includes('inpatient')) {
             hint = "Book an appointment with the inpatient coordinator.";
@@ -2262,7 +2662,7 @@ function getSmartNotes(pat) {
     }
 
     // Rule 9: Approved Referral (NCM = Yes) — Missing Chemo Appointment
-    if ((ref === 'approved' || ref === 'موافق عليه') && (ncm === 'yes' || ncm === 'نعم') && (refType === 'treatment' || refType === 'علاج') && !isValidDate) {
+    if (isApprovedValue(ref) && isYesValue(ncm) && isTreatmentValue(refType) && !isValidDate) {
         let hint = "No chemotherapy appointment has been booked yet by the oncology pharmacy/chemotherapy department.";
         if (division.includes('inpatient')) {
             hint = "Book an appointment with the inpatient coordinator.";
@@ -2277,7 +2677,7 @@ function getSmartNotes(pat) {
     }
     
     // Active Barrier warning
-    if (barrier && barrier !== '0' && barrier !== '0.0' && barrier.toLowerCase() !== 'none' && barrier.toLowerCase() !== 'no') {
+    if (hasActiveBarrier(pat)) {
         notes.push({
             title: "Active Barrier Identified",
             description: `An active barrier is preventing treatment or coordination: "${barrier}"`,
@@ -2304,7 +2704,7 @@ function getSmartNotes(pat) {
 function generateSmartNotesChips(pat) {
     const notes = getSmartNotes(pat);
     return notes.map(note => {
-        return `<span class="smart-note-chip sn-${note.level}" data-tooltip="${note.description}"><i class="${note.icon}"></i> ${note.chipText}</span>`;
+        return `<span class="smart-note-chip sn-${note.level}" data-tooltip="${escapeHTML(note.description)}"><i class="${note.icon}"></i> ${escapeHTML(note.chipText)}</span>`;
     }).join('');
 }
 
@@ -2521,7 +2921,7 @@ function executePrintJob() {
     patientsToPrint.forEach(pat => {
         let rowCells = "";
         activeCols.forEach(col => {
-            let val = getPatientVal(pat, col.key) || '-';
+            let val = escapeHTML(getPatientVal(pat, col.key) || '-');
             if (col.key === 'treatmentReferralStatus' || col.key === 'permitStatus' || col.key === 'status') {
                 const badgeClass = getPillClass(val);
                 rowCells += `<td><span class="status-text-${badgeClass}">${val}</span></td>`;
@@ -2821,7 +3221,7 @@ function setupMasterSearchDropdown() {
             
             const metaEl = document.createElement("div");
             metaEl.className = "search-result-meta";
-            metaEl.innerHTML = `<span>File: ${file}</span> <span>ID: ${id}</span>`;
+            metaEl.innerHTML = `<span>File: ${escapeHTML(file)}</span> <span>ID: ${escapeHTML(id)}</span>`;
             header.appendChild(metaEl);
             
             item.appendChild(header);
@@ -2873,7 +3273,7 @@ function setupMasterSearchDropdown() {
                 analysisList.forEach(note => {
                     const chip = document.createElement("span");
                     chip.className = `search-analysis-chip ${note.level}`;
-                    chip.innerHTML = `<i class="${note.icon}"></i> ${note.chipText || note.title}`;
+                    chip.innerHTML = `<i class="${note.icon}"></i> ${escapeHTML(note.chipText || note.title)}`;
                     analysisContainer.appendChild(chip);
                 });
                 
@@ -3131,8 +3531,8 @@ function renderPatientSearchResults() {
                 <span class="profile-analysis-title"><i class="fa-solid fa-lightbulb text-indigo"></i> Smart Analysis Summary / ملخص التحليل الذكي:</span>
                 <div class="profile-analysis-chips">
                     ${uniqueWarnings.map(note => `
-                        <span class="smart-note-chip sn-${note.level}" data-tooltip="${note.description}">
-                            <i class="${note.icon}"></i> ${note.chipText || note.title}
+                        <span class="smart-note-chip sn-${note.level}" data-tooltip="${escapeHTML(note.description)}">
+                            <i class="${note.icon}"></i> ${escapeHTML(note.chipText || note.title)}
                         </span>
                     `).join('')}
                 </div>
@@ -3172,16 +3572,16 @@ function renderPatientSearchResults() {
                 
                 if (key === 'barrier' && hasActiveBarrier(pat)) {
                     highlightClass = "highlight-danger";
-                } else if (key === 'chemoDate' && val && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                } else if (key === 'chemoDate' && isValidDateValue(val)) {
                     highlightClass = "highlight-success";
-                } else if (key === 'treatmentReferralStatus' && val.toLowerCase() === 'pending') {
+                } else if (key === 'treatmentReferralStatus' && isPendingValue(val)) {
                     highlightClass = "highlight-danger";
                 }
                 
                 fullDataGridHtml += `
                 <div class="data-field ${highlightClass}">
-                    <span class="data-label">${label}</span>
-                    <span class="data-value">${val || '-'}</span>
+                    <span class="data-label">${escapeHTML(label)}</span>
+                    <span class="data-value">${escapeHTML(val || '-')}</span>
                 </div>
                 `;
             }
@@ -3195,41 +3595,41 @@ function renderPatientSearchResults() {
                         ${isCurrent ? `<span class="case-current-badge">Current Case / الحالي</span>` : ''}
                     </div>
                     <div class="case-date">
-                        <i class="fa-solid fa-calendar-day"></i> Visit Date / تاريخ الزيارة: ${visitDate || 'N/A'}
+                        <i class="fa-solid fa-calendar-day"></i> Visit Date / تاريخ الزيارة: ${escapeHTML(visitDate || 'N/A')}
                     </div>
                 </div>
                 <div class="case-card-body">
                     <div class="case-field">
                         <span class="label">Clinic / العيادة</span>
-                        <span class="value">${clinic || '-'}</span>
+                        <span class="value">${escapeHTML(clinic || '-')}</span>
                     </div>
                     <div class="case-field">
                         <span class="label">Division / القسم</span>
-                        <span class="value">${division || '-'}</span>
+                        <span class="value">${escapeHTML(division || '-')}</span>
                     </div>
                     <div class="case-field">
                         <span class="label">Treating Physician / الطبيب المعالج</span>
-                        <span class="value">${physician || '-'}</span>
+                        <span class="value">${escapeHTML(physician || '-')}</span>
                     </div>
                     <div class="case-field">
                         <span class="label">Coordinator / المنسق</span>
-                        <span class="value">${coordinator || '-'}</span>
+                        <span class="value">${escapeHTML(coordinator || '-')}</span>
                     </div>
                     <div class="case-field">
                         <span class="label">Referral Status / حالة إحالة العلاج</span>
-                        <span class="value"><span class="status-pill ${getPillClass(referralStatus)}">${referralStatus || '-'}</span></span>
+                        <span class="value"><span class="status-pill ${getPillClass(referralStatus)}">${escapeHTML(referralStatus || '-')}</span></span>
                     </div>
                     <div class="case-field">
                         <span class="label">Permit Status / حالة التصريح</span>
-                        <span class="value"><span class="status-pill ${getPillClass(permitStatus)}">${permitStatus || '-'}</span></span>
+                        <span class="value"><span class="status-pill ${getPillClass(permitStatus)}">${escapeHTML(permitStatus || '-')}</span></span>
                     </div>
                     <div class="case-field">
                         <span class="label">Chemo Date / تاريخ الكيماوي</span>
-                        <span class="value ${chemoDate ? 'text-green font-weight-bold' : ''}">${chemoDate || '-'}</span>
+                        <span class="value ${chemoDate ? 'text-green font-weight-bold' : ''}">${escapeHTML(chemoDate || '-')}</span>
                     </div>
                     <div class="case-field">
                         <span class="label">Case Status / حالة الملف</span>
-                        <span class="value"><span class="status-pill ${getPillClass(caseStatus)}">${caseStatus || '-'}</span></span>
+                        <span class="value"><span class="status-pill ${getPillClass(caseStatus)}">${escapeHTML(caseStatus || '-')}</span></span>
                     </div>
                 </div>
                 
@@ -3266,10 +3666,10 @@ function renderPatientSearchResults() {
                 </div>
                 <div class="patient-profile-info">
                     <div class="patient-profile-name-row">
-                        <h2>${group.name}</h2>
+                        <h2>${escapeHTML(group.name)}</h2>
                         <div class="patient-profile-badges">
-                            ${group.id ? `<span class="profile-badge id-badge"><i class="fa-solid fa-id-card"></i> ID: ${group.id}</span>` : ''}
-                            ${group.file ? `<span class="profile-badge file-badge"><i class="fa-solid fa-folder-open"></i> File: ${group.file}</span>` : ''}
+                            ${group.id ? `<span class="profile-badge id-badge"><i class="fa-solid fa-id-card"></i> ID: ${escapeHTML(group.id)}</span>` : ''}
+                            ${group.file ? `<span class="profile-badge file-badge"><i class="fa-solid fa-folder-open"></i> File: ${escapeHTML(group.file)}</span>` : ''}
                         </div>
                     </div>
                     <div class="patient-profile-status-row">
@@ -3279,7 +3679,7 @@ function renderPatientSearchResults() {
                         </div>
                         <div class="status-summary-item">
                             <span class="label">Current Status / الحالة الحالية:</span>
-                            <span class="status-pill ${getPillClass(currentCaseStatus)}">${currentCaseStatus || 'Unknown'}</span>
+                            <span class="status-pill ${getPillClass(currentCaseStatus)}">${escapeHTML(currentCaseStatus || 'Unknown')}</span>
                         </div>
                     </div>
                 </div>
