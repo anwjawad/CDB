@@ -10,16 +10,8 @@ let currentQuickFilter = 'all';
 // --- App Configuration & Shared Utilities ---
 const STORAGE_KEYS = Object.freeze({
     theme: "theme",
-    config: "dashboard_config",
-    data: "dashboard_static_data",
-    remoteMeta: "dashboard_remote_metadata"
+    data: "dashboard_static_data"
 });
-
-const DEFAULT_ONEDRIVE_SHARE_URL = "https://1drv.ms/x/c/18fa9d20cfad9d46/IQAs7EU-f7OiRomVmOE52jlaAQIiC6WHZIH1nZeM1_sVc_M?e=ESQPZq";
-const REMOTE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-let remoteRefreshTimer = null;
-let isRemoteSyncing = false;
-let remoteRefreshEventsBound = false;
 
 const VALUE_ALIASES = Object.freeze({
     yes: ["yes", "y", "true", "1", "نعم"],
@@ -113,31 +105,31 @@ function ensureRuntimeDependencies() {
 
 // --- Key Mapping Configuration for Excel Headers ---
 const KEY_MAP = {
-    name: ['Patient Name', 'PatientName', 'اسم المريض'],
+    name: ['patient', 'Patient Name', 'PatientName', 'اسم المريض'],
     id: ['ID', 'Id', 'الهوية', 'رقم الهوية', ' ID'],
     file: ['File Number', 'FileNumber', 'رقم الملف'],
     clinic: ['Clinic', 'العيادة'],
-    visitDate: ['Date of clinic visit', 'Date of clinic visit ', 'تاريخ زيارة العيادة'],
-    division: ['Division', 'Division ', 'القسم'],
+    visitDate: ['Date of clinic visit', 'تاريخ زيارة العيادة'],
+    division: ['Division', 'القسم'],
     diagnosis: ['Diagnosis', 'التشخيص'],
-    coordinator: ['Coordinator/ Clinic Nurse', 'Coordinator', 'المنسق', 'Coordinator/ Clinic Nurse Signature'],
+    coordinator: ['Coordinator/ Clinic Nurse Signature', 'Coordinator/ Clinic Nurse', 'Coordinator', 'المنسق'],
     mobile: ['Patient Mobile', 'رقم الهاتف'],
     physician: ['Primary Physician', 'الطبيب المعالج'],
-    referralType: ["Type patient's referral", "Type patient's referral ", "Type patient's referral"],
-    referralForms: ['Referral forms sent/types', 'Referral forms sent/types '],
-    permitSent: ['Permit form sent', 'Permit form sent '],
-    otherAppt: ['Other Appointments and date', 'Other Appointment date', 'Other Appointments and date'],
+    referralType: ["Type patient's referral"],
+    referralForms: ['Referral forms sent/types'],
+    permitSent: ['Permit form sent'],
+    otherAppt: ['Other Appointments and date', 'Other Appointment date'],
     guidance: ['Patient Guidance Completed'],
     treatmentPlan: ['Treatment Plan'],
     ncm: ['New Cases Meeting'],
-    ncmDecision: ['New Cases Meeting decision', 'New Cases Meeting decision '],
+    ncmDecision: ['New Cases Meeting decision'],
     treatmentReferralStatus: ['Treatment Referral Status'],
     otherReferralStatus: ['Other Referral Status'],
     permitStatus: ['Permit Status'],
-    chemoDate: ['chemotherapy Appointment Date', 'chemotherapy Appointment Date '],
+    chemoDate: ['chemotherapy Appointment Date'],
     notified: ['Patient Notified'],
     notifiedOther: ['Patient Notified of other appointments'],
-    barrier: ['Current Barrier/Issue', 'Current Barrier/Issue ', 'Current Barrier / Issue'],
+    barrier: ['Current Barrier/Issue', 'Current Barrier / Issue'],
     notes: ['Notes'],
     status: ['Case Status', 'Status', 'حالة الملف']
 };
@@ -145,9 +137,21 @@ const KEY_MAP = {
 function getPatientVal(pat, type) {
     const keys = KEY_MAP[type];
     if (!keys) return "";
+    // Exact match first
     for (const key of keys) {
         if (pat[key] !== undefined && pat[key] !== null) {
             return pat[key].toString().trim();
+        }
+    }
+    // Normalized fallback: handles Unicode variants, casing, and invisible whitespace
+    const normalizedAliases = keys.map(k => normalizeValue(k));
+    for (const patKey of Object.keys(pat)) {
+        if (patKey.startsWith('__')) continue;
+        const normalizedPatKey = normalizeValue(patKey);
+        const aliasIdx = normalizedAliases.indexOf(normalizedPatKey);
+        if (aliasIdx !== -1) {
+            const v = pat[patKey];
+            if (v !== undefined && v !== null) return v.toString().trim();
         }
     }
     return "";
@@ -508,15 +512,13 @@ function initApp() {
     setupPrinting();
     setupMasterSearchDropdown();
     setupPatientSearch();
+    setupAnalyticsModal();
     setupTriageBanner();
     setupSidebarToggle();
 
-    // Fetch configuration and initial data
-    fetchConfig();
+    setupResetCache();
     if (dependenciesReady) {
         loadDashboardData({ silent: true });
-        syncRemoteTracker({ showOverlay: true, reason: "initial" });
-        startRemoteAutoRefresh();
     } else {
         const lastSyncEl = document.getElementById("last-sync-time");
         if (lastSyncEl) lastSyncEl.innerText = "Libraries unavailable";
@@ -638,49 +640,7 @@ function setupTabSwitching() {
     });
 }
 
-// --- Load configuration (LocalStorage version) ---
-function fetchConfig() {
-    const cachedConfig = readStorage(STORAGE_KEYS.config, "{}") || "{}";
-    let config = {};
-    try {
-        config = JSON.parse(cachedConfig);
-    } catch (err) {
-        console.warn("Stored dashboard configuration is invalid and will be ignored.", err);
-        removeStorage(STORAGE_KEYS.config);
-    }
-    const urlInput = document.getElementById("settings-url-input");
-    const activeUrl = config.onedrive_url || DEFAULT_ONEDRIVE_SHARE_URL;
-    if (urlInput) {
-        urlInput.value = activeUrl;
-    }
-
-    const saveBtn = document.getElementById("save-url-btn");
-    if (saveBtn) {
-        saveBtn.addEventListener("click", () => {
-            const url = document.getElementById("settings-url-input").value.trim();
-            if (!url) {
-                showToast("Please enter a valid URL", "error");
-                return;
-            }
-            const newConfig = { onedrive_url: url };
-            writeStorage(STORAGE_KEYS.config, JSON.stringify(newConfig));
-            showToast("Settings saved successfully", "success");
-        });
-    }
-
-    const refreshBtn = document.getElementById("refresh-remote-btn");
-    if (refreshBtn) {
-        refreshBtn.addEventListener("click", () => {
-            syncRemoteTracker({ showOverlay: true, reason: "manual" });
-        });
-    }
-    const headerRefreshBtn = document.getElementById("refresh-remote-header-btn");
-    if (headerRefreshBtn) {
-        headerRefreshBtn.addEventListener("click", () => {
-            syncRemoteTracker({ showOverlay: true, reason: "manual" });
-        });
-    }
-
+function setupResetCache() {
     const resetCacheBtn = document.getElementById("reset-cache-btn");
     if (resetCacheBtn) {
         resetCacheBtn.addEventListener("click", () => {
@@ -688,20 +648,8 @@ function fetchConfig() {
             if (!confirmed) return;
             removeStorage(STORAGE_KEYS.data);
             showToast("Cache cleared! Reloading dashboard...", "info");
-            setTimeout(() => {
-                window.location.reload();
-            }, 1000);
+            setTimeout(() => { window.location.reload(); }, 1000);
         });
-    }
-}
-
-function getConfiguredShareUrl() {
-    const cachedConfig = readStorage(STORAGE_KEYS.config, "{}") || "{}";
-    try {
-        const config = JSON.parse(cachedConfig);
-        return config.onedrive_url || DEFAULT_ONEDRIVE_SHARE_URL;
-    } catch (err) {
-        return DEFAULT_ONEDRIVE_SHARE_URL;
     }
 }
 
@@ -711,22 +659,12 @@ function setSyncStepState(stepEl, state, html) {
     stepEl.innerHTML = html;
 }
 
-function showSyncOverlay(mode = "remote") {
+function showSyncOverlay() {
     const overlay = document.getElementById("sync-loading-overlay");
-    const stepConnect = document.getElementById("step-connect");
-    const stepDownload = document.getElementById("step-download");
-    const stepParse = document.getElementById("step-parse");
-
     if (overlay) overlay.classList.remove("hidden");
-    if (mode === "remote") {
-        setSyncStepState(stepConnect, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Connecting to OneDrive shared tracker...');
-        setSyncStepState(stepDownload, "", '<i class="fa-solid fa-circle"></i> Downloading latest workbook');
-        setSyncStepState(stepParse, "", '<i class="fa-solid fa-circle"></i> Parsing worksheets and refreshing dashboard');
-    } else {
-        setSyncStepState(stepConnect, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file...');
-        setSyncStepState(stepDownload, "", '<i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS');
-        setSyncStepState(stepParse, "", '<i class="fa-solid fa-circle"></i> Calculating metrics and drawing dashboard');
-    }
+    setSyncStepState(document.getElementById("step-connect"), "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Reading local file...');
+    setSyncStepState(document.getElementById("step-download"), "", '<i class="fa-solid fa-circle"></i> Parsing worksheets using SheetJS');
+    setSyncStepState(document.getElementById("step-parse"), "", '<i class="fa-solid fa-circle"></i> Calculating metrics and drawing dashboard');
 }
 
 function hideSyncOverlay() {
@@ -734,69 +672,6 @@ function hideSyncOverlay() {
     if (overlay) overlay.classList.add("hidden");
 }
 
-function buildOneDriveDownloadCandidates(shareUrl) {
-    const candidates = [];
-    const addCandidate = (url) => {
-        if (url && !candidates.includes(url)) candidates.push(url);
-    };
-
-    try {
-        const encoded = btoa(unescape(encodeURIComponent(shareUrl)))
-            .replace(/\+/g, "-")
-            .replace(/\//g, "_")
-            .replace(/=+$/, "");
-        addCandidate(`https://api.onedrive.com/v1.0/shares/u!${encoded}/root/content`);
-    } catch (err) {
-        console.warn("Unable to build OneDrive API sharing URL.", err);
-    }
-
-    try {
-        const direct = new URL(shareUrl);
-        direct.searchParams.set("download", "1");
-        direct.searchParams.set("cacheBust", String(Date.now()));
-        addCandidate(direct.toString());
-    } catch (err) {
-        addCandidate(`${shareUrl}${shareUrl.includes("?") ? "&" : "?"}download=1&cacheBust=${Date.now()}`);
-    }
-
-    return candidates;
-}
-
-async function fetchRemoteWorkbookArrayBuffer(shareUrl) {
-    const candidates = buildOneDriveDownloadCandidates(shareUrl);
-    let lastError = null;
-
-    for (const url of candidates) {
-        try {
-            const response = await fetch(url, {
-                method: "GET",
-                cache: "no-store",
-                redirect: "follow",
-                credentials: "include"
-            });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            const contentType = response.headers.get("content-type") || "";
-            const buffer = await response.arrayBuffer();
-            if (!buffer || buffer.byteLength < 1000) {
-                throw new Error("Downloaded file is empty or too small.");
-            }
-            return {
-                buffer,
-                sourceUrl: url,
-                contentType,
-                lastModified: response.headers.get("last-modified") || "",
-                etag: response.headers.get("etag") || ""
-            };
-        } catch (err) {
-            lastError = err;
-            console.warn("OneDrive workbook fetch failed for candidate:", url, err);
-        }
-    }
-
-    throw lastError || new Error("Unable to download the shared OneDrive workbook.");
-}
 
 function applyDashboardData(patients, lists, metadata, options = {}) {
     patientsData = patients;
@@ -857,18 +732,36 @@ function processWorkbook(workbook) {
     }
 
     let headerIdx = -1;
-    for (let i = 0; i < rows.length; i++) {
-        const firstCell = String(rows[i][0] || '').trim();
-        if (firstCell.includes("Patient Name") || firstCell.includes("اسم المريض") || firstCell.includes("Ø§Ø³Ù… Ø§Ù„Ù…Ø±ÙŠØ¶")) {
+    const NAME_HEADER_SIGNALS = ["patient name", "patientname", "اسم المريض", "ø§ø³ù… ø§ù„ù…ø±ùšø¶"];
+    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+        const rowCells = rows[i].map(c => String(c || '').normalize("NFKC").trim().toLowerCase());
+        if (rowCells.some(cell => NAME_HEADER_SIGNALS.some(sig => cell.includes(sig)))) {
             headerIdx = i;
             break;
         }
     }
     if (headerIdx === -1) {
         headerIdx = Math.min(3, rows.length - 1);
+        console.warn("[OncoCoord] Could not auto-detect header row. Falling back to row", headerIdx, ". First row cells:", rows[0]);
     }
+    console.debug("[OncoCoord] Header row detected at index", headerIdx, "| headers:", rows[headerIdx]);
 
-    const headers = rows[headerIdx].map((h, i) => String(h || '').trim() || `Column_${i}`);
+    const rawHeaders = rows[headerIdx].map((h, i) => String(h || '').normalize("NFKC").trim() || `Column_${i}`);
+
+    // Build a normalized-alias → first-alias (canonical) lookup so Excel header variants
+    // (different casing, Unicode form, invisible whitespace) all resolve to a single key.
+    const normalizedToCanonical = {};
+    for (const aliases of Object.values(KEY_MAP)) {
+        const canonical = aliases[0];
+        for (const alias of aliases) {
+            normalizedToCanonical[normalizeValue(alias)] = canonical;
+        }
+    }
+    const headers = rawHeaders.map(h => normalizedToCanonical[normalizeValue(h)] || h);
+
+    console.debug("[OncoCoord] Raw headers:", rawHeaders);
+    console.debug("[OncoCoord] Canonical headers:", headers);
+
     const patients = [];
 
     for (let i = headerIdx + 1; i < rows.length; i++) {
@@ -909,105 +802,20 @@ function processWorkbook(workbook) {
     return { patients, lists: parsedLists };
 }
 
-async function syncRemoteTracker(options = {}) {
-    if (isRemoteSyncing || typeof XLSX === "undefined") return;
-    isRemoteSyncing = true;
-
-    const showOverlay = options.showOverlay !== false;
-    const shareUrl = getConfiguredShareUrl();
-    const stepConnect = document.getElementById("step-connect");
-    const stepDownload = document.getElementById("step-download");
-    const stepParse = document.getElementById("step-parse");
-    const refreshBtn = document.getElementById("refresh-remote-btn");
-    const headerSyncBtn = document.getElementById("refresh-remote-header-btn");
-
-    if (refreshBtn) refreshBtn.disabled = true;
-    if (headerSyncBtn) headerSyncBtn.disabled = true;
-    if (showOverlay) showSyncOverlay("remote");
-
-    try {
-        setSyncStepState(stepConnect, "completed", '<i class="fa-solid fa-circle-check"></i> OneDrive share link resolved');
-        setSyncStepState(stepDownload, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Downloading latest workbook...');
-        const remote = await fetchRemoteWorkbookArrayBuffer(shareUrl);
-        setSyncStepState(stepDownload, "completed", '<i class="fa-solid fa-circle-check"></i> Latest workbook downloaded');
-        setSyncStepState(stepParse, "active", '<i class="fa-solid fa-circle-notch fa-spin"></i> Parsing worksheets and refreshing dashboard...');
-
-        const workbook = XLSX.read(new Uint8Array(remote.buffer), { type: "array", cellDates: true });
-        const { patients, lists } = processWorkbook(workbook);
-        const lastSyncTime = new Date().toLocaleString("en-US", { hour12: true });
-        const remoteMeta = {
-            source: "onedrive",
-            share_url: shareUrl,
-            source_url: remote.sourceUrl,
-            content_type: remote.contentType,
-            last_modified: remote.lastModified,
-            etag: remote.etag,
-            last_synced: lastSyncTime
-        };
-        writeStorage(STORAGE_KEYS.remoteMeta, JSON.stringify(remoteMeta));
-        applyDashboardData(patients, lists, remoteMeta, {
-            toastMessage: `OneDrive tracker synced. Loaded ${patients.length} records.`,
-            toastType: "success"
-        });
-        setSyncStepState(stepParse, "completed", '<i class="fa-solid fa-circle-check"></i> Dashboard updated from OneDrive');
-    } catch (err) {
-        console.error("OneDrive sync failed:", err);
-        if (!patientsData.length) {
-            const initialOverlay = document.getElementById("initial-load-overlay");
-            if (initialOverlay) initialOverlay.classList.remove("hidden");
-        }
-        showToast("Unable to sync the OneDrive shared file. Use the manual Excel upload fallback or check link permissions/CORS.", "error");
-    } finally {
-        isRemoteSyncing = false;
-        if (refreshBtn) refreshBtn.disabled = false;
-        if (headerSyncBtn) headerSyncBtn.disabled = false;
-        if (showOverlay) {
-            setTimeout(hideSyncOverlay, 700);
-        }
-    }
-}
-
-function startRemoteAutoRefresh() {
-    if (remoteRefreshTimer) {
-        clearInterval(remoteRefreshTimer);
-    }
-    remoteRefreshTimer = setInterval(() => {
-        syncRemoteTracker({ showOverlay: false, reason: "polling" });
-    }, REMOTE_REFRESH_INTERVAL_MS);
-
-    if (!remoteRefreshEventsBound) {
-        window.addEventListener("focus", () => {
-            syncRemoteTracker({ showOverlay: false, reason: "focus" });
-        });
-        document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) {
-                syncRemoteTracker({ showOverlay: false, reason: "visible" });
-            }
-        });
-        remoteRefreshEventsBound = true;
-    }
-}
-
 // --- Fetch Dashboard Data ---
 function loadDashboardData(options = {}) {
     const lastSyncEl = document.getElementById("last-sync-time");
     const cachedData = readStorage(STORAGE_KEYS.data);
     
     if (!cachedData) {
-        // Show initial load overlay
         const initialOverlay = document.getElementById("initial-load-overlay");
-        if (initialOverlay) {
-            initialOverlay.classList.remove("hidden");
-        }
-        if (lastSyncEl) lastSyncEl.innerText = "Syncing OneDrive...";
+        if (initialOverlay) initialOverlay.classList.remove("hidden");
+        if (lastSyncEl) lastSyncEl.innerText = "No data — please upload your Excel file";
         return;
     }
-    
-    // Hide initial load overlay
+
     const initialOverlay = document.getElementById("initial-load-overlay");
-    if (initialOverlay) {
-        initialOverlay.classList.add("hidden");
-    }
+    if (initialOverlay) initialOverlay.classList.add("hidden");
 
     try {
         const data = JSON.parse(cachedData);
@@ -1091,12 +899,11 @@ function excelValueToString(val, headerName) {
     
     if (val instanceof Date) {
         const y = val.getFullYear();
+        // Reject epoch/zero-serial dates (Excel serial 0 = 1899-12-30) and far-future garbage
+        if (isNaN(y) || y < 1990 || y > 2100) return "";
         const m = String(val.getMonth() + 1).padStart(2, '0');
         const d = String(val.getDate()).padStart(2, '0');
-        if (!isNaN(y) && !isNaN(val.getMonth()) && !isNaN(val.getDate())) {
-            return `${y}-${m}-${d}`;
-        }
-        return val.toISOString().split('T')[0];
+        return `${y}-${m}-${d}`;
     }
     
     const headerLower = String(headerName).toLowerCase();
@@ -1127,7 +934,7 @@ async function processUploadedExcel(file) {
     const stepDownload = document.getElementById("step-download");
     const stepParse = document.getElementById("step-parse");
 
-    showSyncOverlay("file");
+    showSyncOverlay();
 
     try {
         const arrayBuffer = await readFileAsArrayBuffer(file);
@@ -2276,86 +2083,29 @@ function computeAnalyticsCounts() {
 }
 
 // --- Render Analytics Tab ---
-function renderAnalyticsTab() {
-    const counts = computeAnalyticsCounts();
-    
-    const searchVal = document.getElementById("analytics-search-input") ? document.getElementById("analytics-search-input").value.toLowerCase() : "";
-    const filterBySearch = (list) => {
-        if (!searchVal) return list;
-        return list.filter(pat => {
-            const name = getPatientVal(pat, 'name').toLowerCase();
-            const id = getPatientVal(pat, 'id').toLowerCase();
-            const file = getPatientVal(pat, 'file').toLowerCase();
-            return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
-        });
-    };
-    
-    const a1 = filterBySearch(counts.a1);
-    const a2 = filterBySearch(counts.a2);
-    const a3 = filterBySearch(counts.a3);
-    const a4 = filterBySearch(counts.a4);
-    const a5 = filterBySearch(counts.a5);
-    const a6 = filterBySearch(counts.a6);
-    const a7 = filterBySearch(counts.a7);
-    const a8 = filterBySearch(counts.a8);
-    const a9 = filterBySearch(counts.a9);
-
-    // Update summary KPI mini-cards
-    document.getElementById('akpi-val-1').innerText = a1.length;
-    document.getElementById('akpi-val-2').innerText = a2.length;
-    document.getElementById('akpi-val-3').innerText = a3.length;
-    document.getElementById('akpi-val-4').innerText = a4.length;
-    document.getElementById('akpi-val-5').innerText = a5.length;
-    document.getElementById('akpi-val-6').innerText = a6.length;
-    document.getElementById('akpi-val-7').innerText = a7.length;
-    document.getElementById('akpi-val-8').innerText = a8.length;
-    document.getElementById('akpi-val-9').innerText = a9.length;
-
-    // Update count badges on section headers
-    document.getElementById('count-a1').innerText = a1.length;
-    document.getElementById('count-a2').innerText = a2.length;
-    document.getElementById('count-a3').innerText = a3.length;
-    document.getElementById('count-a4').innerText = a4.length;
-    document.getElementById('count-a5').innerText = a5.length;
-    document.getElementById('count-a6').innerText = a6.length;
-    document.getElementById('count-a7').innerText = a7.length;
-    document.getElementById('count-a8').innerText = a8.length;
-    document.getElementById('count-a9').innerText = a9.length;
-
-    const emptyRow = (cols) => `<tr><td colspan="${cols}"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>No matches</h4><p>No cases match this filter.</p></div></td></tr>`;
-
-    // --- Analysis 1: Pending + NCM = No/Empty ---
-    const tbody1 = document.getElementById('analytics-tbody-1');
-    tbody1.innerHTML = a1.length === 0 ? emptyRow(9) : '';
-    a1.forEach(pat => {
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+// --- Analytics Rules Config (centralized rule metadata) ---
+const ANALYTICS_RULES = {
+    1: {
+        title: 'Treatment Referral Pending — Not Yet Referred to NCM',
+        icon: 'fa-solid fa-circle-xmark', colorClass: 'icon-amber',
+        why: 'Patients appear here when <strong>Treatment Referral Status = Pending</strong> AND <strong>New Cases Meeting (NCM) = No or Empty</strong>.<br>These cases have not yet been presented at the weekly multidisciplinary NCM session. <em>Action: add them to the next NCM meeting before the referral can proceed.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Diagnosis', 'Coordinator', 'Treatment Plan', 'NCM', 'Barrier'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
-            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'ncm', 'Empty')}</span></td>
-            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier', '-')}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody1.appendChild(row);
-    });
-
-    // --- Analysis 2: Pending + NCM = Yes ---
-    const tbody2 = document.getElementById('analytics-tbody-2');
-    tbody2.innerHTML = a2.length === 0 ? emptyRow(9) : '';
-    a2.forEach(pat => {
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'ncm') || '-'}</span></td>
+            <td class="text-danger">${getEscapedPatientVal(pat, 'barrier') || '-'}</td>`
+    },
+    2: {
+        title: 'Treatment Referral Pending — Referred to NCM, Awaiting Decision',
+        icon: 'fa-solid fa-clock', colorClass: 'icon-indigo',
+        why: 'Patients appear here when <strong>Treatment Referral Status = Pending</strong> AND <strong>New Cases Meeting (NCM) = Yes</strong>.<br>The case was presented at NCM but the referral is still pending formal decision or approval. <em>Action: follow up on NCM decision and update the file.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Diagnosis', 'Coordinator', 'Physician', 'Treatment Plan', 'NCM Decision'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
@@ -2363,192 +2113,279 @@ function renderAnalyticsTab() {
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td>${getEscapedPatientVal(pat, 'physician')}</td>
             <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
-            <td class="text-indigo"><strong>${getEscapedPatientVal(pat, 'ncmDecision', 'No Decision')}</strong></td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody2.appendChild(row);
-    });
-
-    // --- Analysis 3: Permit form sent + Permit Status pending/empty ---
-    const tbody3 = document.getElementById('analytics-tbody-3');
-    tbody3.innerHTML = a3.length === 0 ? emptyRow(8) : '';
-    a3.forEach(pat => {
-        const permitStatus = getPatientVal(pat, 'permitStatus') || 'Empty';
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td class="text-indigo"><strong>${getEscapedPatientVal(pat, 'ncmDecision') || '-'}</strong></td>`
+    },
+    3: {
+        title: 'Permit Form Sent — Permit Status Still Pending',
+        icon: 'fa-solid fa-passport', colorClass: 'icon-amber',
+        why: 'Patients appear here when <strong>Permit Form Sent = Yes</strong> AND <strong>Permit Status = Pending or Empty</strong>.<br>The permit application was submitted but no approval or rejection has been recorded yet. <em>Action: follow up with the permits department to confirm receipt and get a status update.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Coordinator', 'Permit Sent', 'Permit Status', 'Patient Notified'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td><span class="status-pill approved">${getEscapedPatientVal(pat, 'permitSent')}</span></td>
-            <td><span class="status-pill pending">${escapeHTML(permitStatus)}</span></td>
-            <td>${getEscapedPatientVal(pat, 'notified', '-')}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody3.appendChild(row);
-    });
-
-    // --- Analysis 4: Referral forms sent + Other Referral Status = pending ---
-    const tbody4 = document.getElementById('analytics-tbody-4');
-    tbody4.innerHTML = a4.length === 0 ? emptyRow(8) : '';
-    a4.forEach(pat => {
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td><span class="status-pill pending">${escapeHTML(getPatientVal(pat, 'permitStatus') || '-')}</span></td>
+            <td>${getEscapedPatientVal(pat, 'notified', '-')}</td>`
+    },
+    4: {
+        title: 'Referral Forms Sent — Other Referral Status Pending',
+        icon: 'fa-solid fa-file-circle-exclamation', colorClass: 'icon-danger',
+        why: 'Patients appear here when <strong>Referral Forms Sent ≠ No/Empty</strong> AND <strong>Other Referral Status = Pending</strong>.<br>Referral forms were dispatched but no confirmation or update has been received from the destination department. <em>Action: contact the referral destination to confirm receipt and request a status update.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Coordinator', 'Referral Forms Sent', 'Other Referral Status', 'Treatment Referral Status'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td>${getEscapedPatientVal(pat, 'referralForms')}</td>
             <td><span class="status-pill pending">${getEscapedPatientVal(pat, 'otherReferralStatus')}</span></td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getEscapedPatientVal(pat, 'treatmentReferralStatus', '-')}</span></td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody4.appendChild(row);
-    });
-
-    // --- Analysis 5: Referral type without/evaluation + Treatment Referral = pending ---
-    const tbody5 = document.getElementById('analytics-tbody-5');
-    tbody5.innerHTML = a5.length === 0 ? emptyRow(8) : '';
-    a5.forEach(pat => {
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'treatmentReferralStatus'))}">${getEscapedPatientVal(pat, 'treatmentReferralStatus', '-')}</span></td>`
+    },
+    5: {
+        title: 'Referral Type: Without/Evaluation — But Status is Pending',
+        icon: 'fa-solid fa-person-circle-question', colorClass: 'icon-danger',
+        why: 'Patients appear here when <strong>Referral Type = Without / Follow-up / Evaluation</strong> AND <strong>Treatment Referral Status = Pending</strong>.<br>This combination is a data inconsistency — a non-treatment referral should not have a pending treatment referral status. <em>Action: review the medical file and correct the referral type or status.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Diagnosis', 'Referral Type', 'Treatment Referral Status', 'Coordinator'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
             <td style="color:var(--color-warning);font-weight:600;">${getEscapedPatientVal(pat, 'referralType')}</td>
             <td><span class="status-pill pending">${getEscapedPatientVal(pat, 'treatmentReferralStatus')}</span></td>
-            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody5.appendChild(row);
-    });
-
-    // --- Analysis 6: NCM = Yes + Chemo Date not a valid date ---
-    const tbody6 = document.getElementById('analytics-tbody-6');
-    tbody6.innerHTML = a6.length === 0 ? emptyRow(8) : '';
-    a6.forEach(pat => {
-        const chemoRaw = getPatientVal(pat, 'chemoDate');
-        const chemoDisplay = chemoRaw && chemoRaw !== '0' && chemoRaw !== '' ? chemoRaw : 'Empty';
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>`
+    },
+    6: {
+        title: 'NCM = Yes — Missing Chemotherapy Appointment Date',
+        icon: 'fa-solid fa-calendar-xmark', colorClass: 'icon-amber',
+        why: 'Patients appear here when <strong>New Cases Meeting (NCM) = Yes</strong> AND <strong>Chemotherapy Appointment Date is empty or not a valid date</strong>.<br>The case was reviewed by NCM but no chemo session has been scheduled yet. <em>Action: coordinate with the chemotherapy department or pharmacy to book the first session.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Diagnosis', 'Coordinator', 'NCM Decision', 'Chemo Date (Current)'],
+        renderCells: (pat) => {
+            const chemoRaw = getPatientVal(pat, 'chemoDate');
+            const chemoDisplay = chemoRaw && chemoRaw !== '0' ? chemoRaw : '-';
+            return `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td>${getEscapedPatientVal(pat, 'ncmDecision', '-')}</td>
-            <td style="color:var(--color-warning);font-weight:600;">${escapeHTML(chemoDisplay)}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody6.appendChild(row);
-    });
-
-    // --- Analysis 7: Scheduled Chemo — Notification Pending ---
-    const tbody7 = document.getElementById('analytics-tbody-7');
-    tbody7.innerHTML = a7.length === 0 ? emptyRow(8) : '';
-    a7.forEach(pat => {
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td style="color:var(--color-warning);font-weight:600;">${escapeHTML(chemoDisplay)}</td>`;
+        }
+    },
+    7: {
+        title: 'Chemotherapy Scheduled — Patient Not Yet Notified',
+        icon: 'fa-solid fa-bell-slash', colorClass: 'icon-amber',
+        why: 'Patients appear here when <strong>Chemotherapy Appointment Date is a valid future date</strong> AND <strong>Patient Notified = No or Empty</strong>.<br>A chemo session has been booked but the patient has not been informed. <em>Action: contact the patient immediately to confirm their appointment date.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Diagnosis', 'Coordinator', 'Chemo Appointment Date', 'Patient Notified'],
+        renderCells: (pat) => `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
             <td class="text-green">${getEscapedPatientVal(pat, 'chemoDate')}</td>
-            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'notified', 'Empty')}</span></td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody7.appendChild(row);
-    });
-
-    // --- Analysis 8: Approved Referral (NCM = No) — Missing Chemo Appointment ---
-    const tbody8 = document.getElementById('analytics-tbody-8');
-    tbody8.innerHTML = a8.length === 0 ? emptyRow(7) : '';
-    a8.forEach(pat => {
-        const div = getPatientVal(pat, 'division');
-        const divLower = div.toLowerCase();
-        let actionMsg = "No chemotherapy appointment booked (Check Division)";
-        if (divLower.includes('outpatient')) {
-            actionMsg = "No chemotherapy appointment has been booked yet by the oncology pharmacy/chemotherapy department";
-        } else if (divLower.includes('inpatient')) {
-            actionMsg = "Book an appointment with the inpatient coordinator";
-        }
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+            <td><span class="status-pill rejected">${getEscapedPatientVal(pat, 'notified') || '-'}</span></td>`
+    },
+    8: {
+        title: 'Approved Referral (NCM = No) — No Chemo Appointment Booked',
+        icon: 'fa-solid fa-house-medical-circle-exclamation', colorClass: 'icon-danger',
+        why: 'Patients appear here when <strong>Treatment Referral Status = Approved</strong> AND <strong>Referral Type = Treatment</strong> AND <strong>NCM = No or Empty</strong> AND <strong>Chemotherapy Date is missing</strong>.<br>The treatment referral was approved without going through NCM, but no chemotherapy session has been scheduled. <em>Action: contact the oncology pharmacy or chemo department (outpatient) / inpatient coordinator (inpatient) to book the first session.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Division', 'Coordinator', 'Required Action'],
+        renderCells: (pat) => {
+            const div = getPatientVal(pat, 'division');
+            const action = div.toLowerCase().includes('inpatient')
+                ? 'Book with inpatient coordinator'
+                : 'Contact oncology pharmacy / chemo department';
+            return `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${escapeHTML(div || '-')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
-            <td class="text-danger font-weight-bold">${escapeHTML(actionMsg)}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody8.appendChild(row);
-    });
-
-    // --- Analysis 9: Approved Referral (NCM = Yes) — Missing Chemo Appointment ---
-    const tbody9 = document.getElementById('analytics-tbody-9');
-    tbody9.innerHTML = a9.length === 0 ? emptyRow(7) : '';
-    a9.forEach(pat => {
-        const div = getPatientVal(pat, 'division');
-        const divLower = div.toLowerCase();
-        let actionMsg = "No chemotherapy appointment booked (Check Division)";
-        if (divLower.includes('outpatient')) {
-            actionMsg = "No chemotherapy appointment has been booked yet by the oncology pharmacy/chemotherapy department";
-        } else if (divLower.includes('inpatient')) {
-            actionMsg = "Book an appointment with the inpatient coordinator";
+            <td class="text-danger font-weight-bold">${escapeHTML(action)}</td>`;
         }
-        const row = document.createElement('tr');
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
-        row.innerHTML = `
+    },
+    9: {
+        title: 'Approved Referral (NCM = Yes) — No Chemo Appointment Booked',
+        icon: 'fa-solid fa-clock', colorClass: 'icon-danger',
+        why: 'Patients appear here when <strong>Treatment Referral Status = Approved</strong> AND <strong>Referral Type = Treatment</strong> AND <strong>NCM = Yes</strong> AND <strong>Chemotherapy Date is missing</strong>.<br>The case was reviewed by NCM and the referral was approved, but no chemotherapy session has been scheduled yet. <em>Action: contact the oncology pharmacy or chemo department (outpatient) / inpatient coordinator (inpatient) to book the first session.</em>',
+        headers: ['Patient Name', 'ID', 'Clinic', 'Division', 'Coordinator', 'Required Action'],
+        renderCells: (pat) => {
+            const div = getPatientVal(pat, 'division');
+            const action = div.toLowerCase().includes('inpatient')
+                ? 'Book with inpatient coordinator'
+                : 'Contact oncology pharmacy / chemo department';
+            return `
             <td><strong>${getEscapedPatientVal(pat, 'name')}</strong></td>
             <td>${getEscapedPatientVal(pat, 'id')}</td>
             <td>${getEscapedPatientVal(pat, 'clinic')}</td>
             <td>${escapeHTML(div || '-')}</td>
             <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
-            <td class="text-danger font-weight-bold">${escapeHTML(actionMsg)}</td>
-            <td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>
-        `;
-        row.querySelector('.open-details-btn').addEventListener('click', () => openPatientDrawer(pat));
-        row.addEventListener('click', () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody9.appendChild(row);
+            <td class="text-danger font-weight-bold">${escapeHTML(action)}</td>`;
+        }
+    }
+};
+
+let analyticsResults = {};
+
+function setupAnalyticsModal() {
+    // Wire KPI cards to open modal
+    for (let i = 1; i <= 9; i++) {
+        const card = document.getElementById(`akpi-${i}`);
+        if (!card) continue;
+        const ruleNum = i;
+        card.style.cursor = 'pointer';
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.addEventListener('click', () => openAnalyticsModal(ruleNum));
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAnalyticsModal(ruleNum); }
+        });
+    }
+
+    // Wire modal close
+    const modal = document.getElementById('analytics-modal');
+    document.getElementById('close-analytics-modal-btn')?.addEventListener('click', () => modal.classList.add('hidden'));
+    modal?.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') modal?.classList.add('hidden'); });
+
+    // Wire "Why?" toggle
+    document.getElementById('analytics-modal-why-btn')?.addEventListener('click', () => {
+        const panel = document.getElementById('analytics-modal-why-panel');
+        const btn   = document.getElementById('analytics-modal-why-btn');
+        panel.classList.toggle('hidden');
+        btn.classList.toggle('reason-active');
     });
+
+    // Wire modal search
+    document.getElementById('analytics-modal-search')?.addEventListener('input', () => {
+        renderAnalyticsModalTable();
+    });
+
+    // Wire print button
+    document.getElementById('analytics-modal-print-btn')?.addEventListener('click', printAnalyticsModal);
+}
+
+function printAnalyticsModal() {
+    const rule     = ANALYTICS_RULES[_currentModalRule];
+    const patients = analyticsResults[`a${_currentModalRule}`] || [];
+    const searchVal = (document.getElementById('analytics-modal-search')?.value || '').toLowerCase();
+
+    const filtered = searchVal ? patients.filter(pat => {
+        const name = getPatientVal(pat, 'name').toLowerCase();
+        const id   = getPatientVal(pat, 'id').toLowerCase();
+        const file = getPatientVal(pat, 'file').toLowerCase();
+        return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
+    }) : patients;
+
+    if (filtered.length === 0) {
+        showToast("No patients to print.", "info");
+        return;
+    }
+
+    // Determine columns relevant to this rule (from its table headers)
+    const relevantKeys = new Set(['name', 'id', 'clinic']);
+    rule.headers.forEach(h => {
+        const key = getColumnKeyFromHeaderText(h);
+        if (key) relevantKeys.add(key);
+    });
+
+    // Pre-populate the column picker with relevant columns checked
+    const container = document.getElementById("print-column-checkboxes");
+    if (!container) return;
+    container.innerHTML = "";
+    ALL_EXCEL_COLUMNS.forEach(col => {
+        const label = document.createElement("label");
+        label.className = "column-checkbox-label";
+        label.innerHTML = `<input type="checkbox" data-key="${col.key}" ${relevantKeys.has(col.key) ? 'checked' : ''}><span>${col.label}</span>`;
+        container.appendChild(label);
+    });
+
+    currentPrintConfig.tabName = rule.title;
+    currentPrintConfig.patientsToPrint = filtered;
+
+    document.getElementById("print-column-modal").classList.remove("hidden");
+}
+
+let _currentModalRule = 1;
+
+function openAnalyticsModal(ruleNum) {
+    const rule = ANALYTICS_RULES[ruleNum];
+    if (!rule) return;
+    _currentModalRule = ruleNum;
+
+    // Populate header
+    document.getElementById('analytics-modal-title').textContent = rule.title;
+    const iconEl = document.getElementById('analytics-modal-icon-el');
+    iconEl.className = `analytics-modal-icon ${rule.colorClass}`;
+    iconEl.innerHTML = `<i class="${rule.icon}"></i>`;
+    document.getElementById('analytics-modal-why-text').innerHTML = rule.why;
+
+    // Reset "Why?" panel
+    document.getElementById('analytics-modal-why-panel').classList.add('hidden');
+    document.getElementById('analytics-modal-why-btn').classList.remove('reason-active');
+
+    // Reset search
+    document.getElementById('analytics-modal-search').value = '';
+
+    // Set column headers
+    const thead = document.getElementById('analytics-modal-thead');
+    thead.innerHTML = '<tr>' + rule.headers.map(h => `<th>${escapeHTML(h)}</th>`).join('') + '<th></th></tr>';
+
+    renderAnalyticsModalTable();
+
+    document.getElementById('analytics-modal').classList.remove('hidden');
+    document.getElementById('analytics-modal-search').focus();
+}
+
+function renderAnalyticsModalTable() {
+    const rule     = ANALYTICS_RULES[_currentModalRule];
+    const patients = analyticsResults[`a${_currentModalRule}`] || [];
+    const searchVal = (document.getElementById('analytics-modal-search')?.value || '').toLowerCase();
+
+    const filtered = searchVal ? patients.filter(pat => {
+        const name = getPatientVal(pat, 'name').toLowerCase();
+        const id   = getPatientVal(pat, 'id').toLowerCase();
+        const file = getPatientVal(pat, 'file').toLowerCase();
+        return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
+    }) : patients;
+
+    document.getElementById('analytics-modal-count-label').textContent =
+        `${filtered.length} patient${filtered.length !== 1 ? 's' : ''}${searchVal ? ' matching search' : ''}`;
+
+    const tbody = document.getElementById('analytics-modal-tbody');
+    tbody.innerHTML = '';
+
+    if (filtered.length === 0) {
+        const colCount = rule.headers.length + 1;
+        tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>No patients</h4><p>${searchVal ? 'No results match your search.' : 'No cases match this filter.'}</p></div></td></tr>`;
+        return;
+    }
+
+    filtered.forEach(pat => {
+        const tr = document.createElement('tr');
+        if (hasActiveBarrier(pat)) tr.classList.add('has-barrier');
+        tr.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
+        tr.innerHTML = rule.renderCells(pat) + `<td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>`;
+        tr.querySelector('.open-details-btn').addEventListener('click', (e) => { e.stopPropagation(); openPatientDrawer(pat); });
+        tr.addEventListener('click', () => openPatientDrawer(pat));
+        makeRowInteractive(tr, pat);
+        tbody.appendChild(tr);
+    });
+}
+
+function renderAnalyticsTab() {
+    const counts = computeAnalyticsCounts();
+    analyticsResults = counts;
+
+    for (let i = 1; i <= 9; i++) {
+        const el = document.getElementById(`akpi-val-${i}`);
+        if (el) el.innerText = counts[`a${i}`].length;
+    }
+
 }
 
 // --- Smart Notes Generation logic ---

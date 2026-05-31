@@ -4,139 +4,133 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**OncoCoord v3** — a fully serverless, client-side oncology patient coordination dashboard. There is no backend, build step, or package manager. The app runs entirely in the browser and can be hosted on GitHub Pages or any static file server.
+**OncoCoord v3** — a fully serverless, client-side oncology patient coordination dashboard. No backend, no build step, no package manager. Runs entirely in the browser; hostable on GitHub Pages or any static file server.
 
 ## Running the App
 
-Open `index.html` directly in a browser, or serve the three files (`index.html`, `styles.css`, `dashboard.js`) from any static HTTP server. There is no `npm install`, no compilation, and no dev server required.
-
-For local testing with CORS-free file access, use a simple server:
+Open `index.html` directly in a browser, or run:
 ```
 python -m http.server 8080
 ```
-Then open `http://localhost:8080`.
+Then open `http://localhost:8080`. There is no `npm install`, no compilation, no dev server.
 
 ## Architecture
 
-The entire application is three files:
+Three files only:
 
-- **`index.html`** — static shell with all tab sections, tables, modals, and the patient-detail drawer pre-rendered in HTML. Dynamic content targets (`<tbody id="...">`, KPI value spans, badge counts) are populated by JavaScript.
-- **`styles.css`** — CSS custom properties-based design system. Dark/light theme switching is done by toggling `.dark-theme` / `.light-theme` on `<body>`. All color tokens, spacing, and layout are CSS variables defined in `:root`.
-- **`dashboard.js`** — all application logic. No frameworks, vanilla JS only.
-
-### Data Flow
-
-1. On load, JS attempts to fetch the OneDrive sharing link (`DEFAULT_ONEDRIVE_SHARE_URL`) via `fetch()`, converts it to a direct download URL, then parses the binary `.xlsx` using **SheetJS** (`XLSX` global from CDN).
-2. Parsed patient rows are stored in `patientsData[]` (global array of raw Excel row objects). `dropdownLists` holds the reference lists from the "Lists" sheet.
-3. All filtering, search, analytics, and rendering reads from `patientsData[]` — no secondary data store.
-4. Parsed data is cached to `localStorage` under key `dashboard_static_data` as JSON. On next load, the cached data is shown immediately while a background re-fetch occurs.
-5. Auto-refresh runs every 5 minutes via `setInterval` stored in `remoteRefreshTimer`.
-
-### Key Mapping (`KEY_MAP`)
-
-Because the Excel tracker headers may vary (English/Arabic, trailing spaces), every field access goes through `getPatientVal(pat, type)` which tries each alias in `KEY_MAP[type]` in order. **Never access `pat['Column Name']` directly** — always use `getPatientVal` or `getEscapedPatientVal`.
-
-### Value Normalization
-
-`normalizeValue()` strips whitespace, lowercases, and Unicode-normalizes before any comparison. Status comparisons (`isPendingValue`, `isYesValue`, `isApprovedValue`, etc.) use the `VALUE_ALIASES` map which covers both English and Arabic equivalents. Always use these helpers when checking field values.
+- **`index.html`** — static shell with all tabs, tables, modals, the patient-detail drawer, and the triage banner pre-rendered in HTML. Dynamic content targets are `<tbody id="...">`, KPI `<span>` elements, and badge counts — all populated by JS.
+- **`styles.css`** — CSS custom properties design system. Dark/light theme is toggled by swapping `.dark-theme` / `.light-theme` on `<body>`. All color tokens are CSS variables in `:root`; `.light-theme` overrides only the variables that change.
+- **`dashboard.js`** — all application logic, vanilla JS, no frameworks.
 
 ### CDN Dependencies (no local copies)
 
-- **Chart.js** — bar/doughnut/pie charts in the Overview tab
-- **SheetJS (`xlsx@0.18.5`)** — client-side `.xlsx` parsing
+Loaded in `index.html` `<head>`:
+- **Chart.js** — 4 charts in the Overview tab
+- **SheetJS `xlsx@0.18.5`** — client-side `.xlsx` parsing (the `XLSX` global)
 - **FontAwesome 6.4** — icons
 - **Google Fonts** — Outfit (Latin UI) + Tajawal (Arabic text)
 
-The app will show a toast error and degrade gracefully if Chart.js or SheetJS fail to load.
+`ensureRuntimeDependencies()` checks `typeof Chart` and `typeof XLSX` at startup and shows a toast if either is missing.
 
-## Excel Workbook Requirements
+### Data Flow
 
-The tracker workbook must have exactly these sheet names:
-- **"Tracking sheet"** — patient records; headers auto-detected by scanning for "Patient Name" or "اسم المريض"
-- **"Lists"** — coordinator/clinic/division dropdown reference data
+1. `initApp()` runs on `DOMContentLoaded`. It chains: `fetchConfig()` → `loadDashboardData({ silent: true })` → `syncRemoteTracker({ showOverlay: true })` → `startRemoteAutoRefresh()`.
+2. `loadDashboardData` reads `localStorage["dashboard_static_data"]` and renders cached data immediately (stale-while-revalidate).
+3. `syncRemoteTracker` fetches the OneDrive `.xlsx` via `fetchRemoteWorkbookArrayBuffer()`, which tries two URL candidates: the OneDrive API sharing form (`api.onedrive.com/v1.0/shares/u!<encoded>`) and a direct `?download=1` variant.
+4. The downloaded `ArrayBuffer` is parsed by `processWorkbook()` using SheetJS. This reads the "Tracking sheet" (auto-detects the header row by looking for "Patient Name" / "اسم المريض") and the "Lists" sheet.
+5. `applyDashboardData(patients, lists, metadata)` writes the result to `localStorage`, then calls the render pipeline: `populateFilterOptions()` → `calculateKPIs()` → `renderCharts()` → `applyFilters()` → `updateBadges()`.
+6. Auto-refresh fires every 5 minutes via `remoteRefreshTimer` (`setInterval`). It also fires on `window focus` and `document visibilitychange`.
 
-The parser (`parseExcelData`) reads the "Tracking sheet" starting from the first row that contains a recognized patient-name header, so leading metadata rows above the header are safe.
+All storage access goes through `readStorage` / `writeStorage` / `removeStorage` — never `localStorage` directly.
 
-## Analytics Rules
+### Key Mapping (`KEY_MAP`)
 
-The Smart Analytics tab applies 9 rule sets to `patientsData[]`. Each rule is a filter predicate over normalized field values. When adding or modifying analytics rules, the pattern is:
+Excel column headers vary (English/Arabic, trailing spaces). **Never access `pat['Column Name']` directly.** Always use:
 
 ```js
-const matches = patientsData.filter(pat => {
-    const field = getPatientVal(pat, 'fieldKey');
-    return isXxxValue(field) && ...;
-});
+getPatientVal(pat, 'fieldKey')       // returns raw string
+getEscapedPatientVal(pat, 'fieldKey') // HTML-escaped, safe for innerHTML
 ```
 
-Update both the count badge (`akpi-val-N`) and the table body (`analytics-tbody-N`) together.
+`KEY_MAP` in `dashboard.js:115` lists every alias for each logical field (`name`, `id`, `file`, `clinic`, `visitDate`, `division`, `diagnosis`, `coordinator`, `mobile`, `physician`, `referralType`, `referralForms`, `permitSent`, `otherAppt`, `guidance`, `treatmentPlan`, `ncm`, `ncmDecision`, `treatmentReferralStatus`, `otherReferralStatus`, `permitStatus`, `chemoDate`, `notified`, `notifiedOther`, `barrier`, `notes`, `status`).
 
-## Theme System
+### Value Normalization
 
-Theme is toggled by `toggleTheme()` which swaps `.dark-theme` / `.light-theme` on `document.body` and saves to `localStorage['theme']`. All visual variants are handled purely in CSS via the class — no JS style manipulation.
+`normalizeValue(value)` strips whitespace, Unicode-normalizes (NFKC), and lowercases. **All field comparisons must go through the helper functions** — never compare raw strings:
+
+```js
+isYesValue(v)      isNoValue(v)      isPendingValue(v)
+isApprovedValue(v) isRejectedValue(v) isTreatmentValue(v)
+isEmptyLike(v)     isValidDateValue(v)  // checks YYYY-MM-DD format
+```
+
+These read from `VALUE_ALIASES` which covers both English and Arabic equivalents.
+
+### Tab System
+
+Tabs are pre-rendered in `index.html` as `<section class="tab-pane" id="tab-<name>">`. `setupTabSwitching()` toggles the `.active` class. Each tab has a dedicated render function triggered on switch:
+
+| Tab | Render function |
+|-----|----------------|
+| `master` | `applyFilters()` → `renderMainTable()` |
+| `patient-search` | `renderPatientSearchResults()` |
+| `followup` | `renderFollowupTab()` |
+| `ncm` | `renderNcmTab()` |
+| `inpatient` | `renderInpatientTab()` |
+| `outpatient` | `renderOutpatientTab()` |
+| `barriers` | `renderBarriersTab()` |
+| `analytics` | `renderAnalyticsTab()` |
+
+### Smart Notes System (9 Rules)
+
+`getSmartNotes(pat)` runs 9 rule predicates against a single patient and returns an array of `{ title, description, level, chipText, icon }` objects. Levels: `"ok"`, `"warning"`, `"danger"`.
+
+`generateSmartNotesChips(pat)` renders these as `<span class="smart-note-chip sn-<level>">` elements shown inline in the Master Registry table's last column.
+
+Rules (in order in `dashboard.js`):
+1. Permit form sent + permit status is pending
+2. NCM = Yes + NCM decision empty
+3. Guidance not completed + referral approved
+4. Referral forms sent + other referral status pending
+5. Referral type is Without/Evaluation/Follow-up + treatment referral pending
+6. NCM = Yes + chemo date missing/invalid
+7. Chemo date valid + patient not notified
+8. Referral approved, NCM = No, type = Treatment + chemo date missing
+9. Referral approved, NCM = Yes, type = Treatment + chemo date missing
+10. Active barrier (bonus rule — `hasActiveBarrier()`)
+
+When adding rules, update both `getSmartNotes` and, if needed, the corresponding badge count in `updateBadges()`.
+
+### Charts
+
+`renderCharts()` destroys any existing `charts.*` instances before creating new ones. The `charts` object holds: `clinic` (stacked bar), `referral` (doughnut), `diagnoses` (horizontal bar), `coordinators` (vertical bar). On theme switch, `updateChartsTheme()` destroys and recreates all charts with the new text/grid colors.
+
+### Patient Drawer
+
+`openPatientDrawer(pat)` populates and shows `#patient-detail-drawer`. It calls `renderPatientTimeline(pat)` to build the 6-step coordination timeline (Clinic Visit → Referral → NCM → Permit → Chemo → Notified) and `getSmartNotes(pat)` to show action items. Close via `setupDrawerClose()`.
+
+### Print System
+
+`setupPrinting()` populates a column picker modal from `ALL_EXCEL_COLUMNS` (defined at `dashboard.js:2732`). The user selects columns, then `buildPrintContent()` generates a standalone HTML document injected into a hidden `<iframe>` and printed. Operates on `filteredPatients` (respects current filters).
+
+### Storage Keys
+
+```js
+STORAGE_KEYS = {
+    theme:      "theme",
+    config:     "dashboard_config",       // { onedrive_url }
+    data:       "dashboard_static_data",  // { patients[], lists{}, metadata{} }
+    remoteMeta: "dashboard_remote_metadata"
+}
+```
+
+### Excel Workbook Requirements
+
+- Sheet **"Tracking sheet"**: patient records; first column of the header row must contain "Patient Name" or "اسم المريض". Leading metadata rows above the header are safe.
+- Sheet **"Lists"**: coordinator/clinic/division dropdown reference data; read by `processWorkbook` and stored in `dropdownLists`.
+
+Date cells are converted to `YYYY-MM-DD` strings by `excelValueToString()` / `excelDateToStr()`. Raw `0` and `0.0` numeric values are treated as empty by `cleanValueJS()`.
 
 ## Available Project Skills
 
-Invoke with `/skill-name` in Claude Code. All skills are project-scoped in `.claude/skills/`.
-
-### UI/UX & Design
-- `frontend-design` — General frontend design guidance (Anthropic)
-- `web-design-guidelines` — Web design best practices (Vercel)
-- `ui-ux-pro-max` — Advanced UI/UX methodology
-- `high-end-visual-design` — Premium visual design taste
-- `design-taste-frontend` — Frontend design taste principles
-- `minimalist-ui` — Minimalist UI patterns
-- `industrial-brutalist-ui` — Industrial/brutalist UI style
-- `stitch-design-taste` — Stitch/Google Labs design taste
-- `extract-design-system` — Extract a design system from existing UI
-- `emil-design-eng` — Emil Kowalski design engineering patterns
-- `shadcn` — shadcn/ui component patterns *(run manually if missing)*
-
-### Frontend & Web Frameworks
-- `vercel-react-best-practices` — React best practices (Vercel)
-- `vercel-composition-patterns` — React composition patterns (Vercel)
-- `vercel-react-native-skills` — React Native patterns (Vercel)
-- `deploy-to-vercel` — Deploy to Vercel
-- `next-best-practices` — Next.js best practices
-- `react:components` (installed as `react-components`) — React component patterns (Google/Stitch)
-- `web-artifacts-builder` — Build web artifacts (Anthropic)
-- `better-auth-best-practices` — better-auth integration
-
-### Databases & Backend
-- `supabase` — Supabase integration
-- `supabase-postgres-best-practices` — Postgres best practices with Supabase
-- `firebase-basics` — Firebase fundamentals
-- `firebase-auth-basics` — Firebase Authentication
-- `firebase-hosting-basics` — Firebase Hosting
-- `firebase-app-hosting-basics` — Firebase App Hosting
-- `firebase-data-connect` — Firebase Data Connect
-- `convex-quickstart` — Convex quickstart
-- `convex-setup-auth` — Convex auth setup
-- `convex-performance-audit` — Convex performance audit
-
-### Files & Data Processing
-- `xlsx` — Excel/XLSX file handling (Anthropic)
-- `pdf` — PDF processing (Anthropic)
-- `docx` — Word document handling (Anthropic)
-- `pptx` — PowerPoint handling (Anthropic)
-
-### Microsoft Azure
-- `azure-ai` — Azure AI services
-- `azure-storage` — Azure Storage
-- `azure-deploy` — Azure deployment
-- `azure-compute` — Azure Compute
-- `azure-cost` — Azure cost management *(closest match to azure-cost-optimization)*
-- `appinsights-instrumentation` — Azure Application Insights *(closest match to azure-observability)*
-
-### Marketing & SEO
-- `seo-audit` — SEO audit
-- `ai-seo` — AI-driven SEO
-- `copywriting` — Copywriting guidance
-- `content-strategy` — Content strategy
-- `signup` — Signup flow optimization
-- `cro` — Conversion rate optimization *(signup + cro replace signup-flow-cro)*
-
-### AI & ComfyUI Media
-- `image-to-video` — Image-to-video generation (RunComfy)
-- `image-inpainting` — Image inpainting (RunComfy)
-- `video-inpainting` — Video inpainting (RunComfy)
-- `flux-2-klein` — Flux 2 Klein image generation (RunComfy)
+`.claude/skills/userinterface-wiki` — UI/UX rules for animation, typography, CSS pseudo-elements, prefetching, and accessibility. Invoke with `/userinterface-wiki`.

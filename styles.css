@@ -1587,6 +1587,187 @@ body {
     padding: 0 24px 16px 24px;
 }
 
+/* --- Analytics KPI card interactivity --- */
+.analytics-tap-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    padding: 0 4px;
+}
+.analytics-kpi {
+    cursor: pointer;
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.analytics-kpi:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+}
+.analytics-kpi:active { transform: translateY(0); }
+.akpi-view-hint {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--color-primary);
+    font-weight: 600;
+    margin-top: 4px;
+    letter-spacing: 0.02em;
+}
+
+/* --- Analytics Modal --- */
+.analytics-modal-card {
+    width: fit-content;
+    min-width: clamp(700px, 72vw, calc(100vw - 40px));
+    max-width: calc(100vw - 40px);
+    max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+}
+.analytics-modal-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--card-border);
+    flex-shrink: 0;
+}
+.analytics-modal-title-group {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+    min-width: 0;
+}
+.analytics-modal-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+.analytics-modal-icon.icon-amber  { background: var(--color-warning-bg);  color: var(--color-warning); }
+.analytics-modal-icon.icon-danger { background: var(--color-danger-bg);   color: var(--color-danger); }
+.analytics-modal-icon.icon-indigo { background: var(--color-primary-glow); color: var(--color-primary); }
+#analytics-modal-title {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 2px;
+}
+.analytics-modal-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.analytics-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.analytics-modal-why-card {
+    margin: 0;
+    border-radius: 0;
+    border-left-width: 4px;
+}
+.analytics-modal-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    padding: 16px 24px 20px;
+    gap: 12px;
+    min-width: 0;
+}
+.analytics-modal-search-box {
+    flex-shrink: 0;
+    min-width: 280px;
+}
+.analytics-modal-table-wrap {
+    flex: 1;
+    overflow: auto;
+    padding: 0;
+}
+.analytics-modal-table-wrap .data-table {
+    width: max-content;
+    min-width: 100%;
+}
+
+/* --- Analytics Reason Row --- */
+.reason-row td {
+    padding: 0 !important;
+    border-top: none !important;
+}
+.reason-card {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 20px 14px 20px;
+    background: var(--color-info-bg);
+    border-left: 3px solid var(--color-info);
+    animation: reasonSlideIn 0.18s ease;
+}
+@keyframes reasonSlideIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.reason-card-icon {
+    color: var(--color-info);
+    font-size: 1rem;
+    margin-top: 1px;
+    flex-shrink: 0;
+}
+.reason-card-body { flex: 1; }
+.reason-card-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+.reason-card-text {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+.reason-card-text strong {
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+/* --- Row actions cell & info button --- */
+.row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    justify-content: flex-end;
+}
+.btn-reason-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 1rem;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    transition: color var(--transition-fast), background var(--transition-fast);
+}
+.btn-reason-info:hover {
+    color: var(--color-info);
+    background: var(--color-info-bg);
+}
+.btn-reason-info.reason-active {
+    color: var(--color-info);
+    background: var(--color-info-bg);
+}
+
 /* --- Smart Notes CSS --- */
 .smart-note-chip {
     display: inline-flex;
@@ -1808,6 +1989,11 @@ body {
     align-items: center;
     justify-content: center;
     transition: opacity var(--transition-fast);
+}
+
+/* Print column picker always appears above any other modal */
+#print-column-modal {
+    z-index: 11000;
 }
 
 .modal-overlay.hidden {
