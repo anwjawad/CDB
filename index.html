@@ -80,6 +80,11 @@
                         <span>Smart Analytics</span>
                         <span class="badge badge-danger" id="badge-analytics">0</span>
                     </button>
+                    <button class="nav-item" data-tab="workflow" id="nav-workflow">
+                        <i class="fa-solid fa-diagram-next"></i>
+                        <span>Workflow Follow-up</span>
+                        <span class="badge badge-danger" id="badge-workflow">0</span>
+                    </button>
                 </div>
                 <div class="nav-group">
                     <span class="nav-group-label">System</span>
@@ -742,7 +747,126 @@
 
                 </section>
 
-                <!-- 9. SETTINGS TAB -->
+                <!-- 9. WORKFLOW FOLLOW-UP TAB -->
+                <section class="tab-pane" id="tab-workflow">
+
+                    <p class="analytics-tap-hint"><i class="fa-solid fa-hand-pointer"></i> Click any card to view patients in that follow-up category. A patient may appear in multiple lists simultaneously.</p>
+
+                    <div class="analytics-summary-grid workflow-summary-grid">
+
+                        <div class="analytics-kpi glass-card" id="wkpi-A" role="button" tabindex="0" aria-label="Treatment Referral Follow-up — click to view patients">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-file-medical"></i></div>
+                            <div>
+                                <h4>A. Treatment Referral Follow-up</h4>
+                                <p class="akpi-val" id="wkpi-val-A">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-B" role="button" tabindex="0" aria-label="Other Referral Follow-up — click to view patients">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-file-circle-exclamation"></i></div>
+                            <div>
+                                <h4>B. Other Referral Follow-up</h4>
+                                <p class="akpi-val" id="wkpi-val-B">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-C" role="button" tabindex="0" aria-label="Treatment Plan Missing — click to view patients">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-clipboard-question"></i></div>
+                            <div>
+                                <h4>C. Treatment Plan Missing</h4>
+                                <p class="akpi-val" id="wkpi-val-C">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-D" role="button" tabindex="0" aria-label="Permit Form Needed — click to view patients">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-passport"></i></div>
+                            <div>
+                                <h4>D. Permit Form Needed</h4>
+                                <p class="akpi-val" id="wkpi-val-D">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-E" role="button" tabindex="0" aria-label="Permit Follow-up — click to view patients">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-stamp"></i></div>
+                            <div>
+                                <h4>E. Permit Follow-up</h4>
+                                <p class="akpi-val" id="wkpi-val-E">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-F" role="button" tabindex="0" aria-label="Needs Chemotherapy Appointment — click to view patients">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-syringe"></i></div>
+                            <div>
+                                <h4>F. Needs Chemo Appointment</h4>
+                                <p class="akpi-val" id="wkpi-val-F">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-G" role="button" tabindex="0" aria-label="Patient Notification Chemo — click to view patients">
+                            <div class="analytics-kpi-icon icon-amber"><i class="fa-solid fa-bell-slash"></i></div>
+                            <div>
+                                <h4>G. Patient Notification (Chemo)</h4>
+                                <p class="akpi-val" id="wkpi-val-G">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-H" role="button" tabindex="0" aria-label="Other Appointment Notification — click to view patients">
+                            <div class="analytics-kpi-icon icon-indigo"><i class="fa-solid fa-calendar-check"></i></div>
+                            <div>
+                                <h4>H. Other Appt Notification</h4>
+                                <p class="akpi-val" id="wkpi-val-H">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-I" role="button" tabindex="0" aria-label="Patient Guidance Follow-up — click to view patients">
+                            <div class="analytics-kpi-icon icon-indigo"><i class="fa-solid fa-person-chalkboard"></i></div>
+                            <div>
+                                <h4>I. Patient Guidance</h4>
+                                <p class="akpi-val" id="wkpi-val-I">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-J" role="button" tabindex="0" aria-label="New Cases Meeting List — click to view patients">
+                            <div class="analytics-kpi-icon icon-indigo"><i class="fa-solid fa-user-doctor"></i></div>
+                            <div>
+                                <h4>J. New Cases Meeting</h4>
+                                <p class="akpi-val" id="wkpi-val-J">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-K" role="button" tabindex="0" aria-label="Completed — click to view patients">
+                            <div class="analytics-kpi-icon icon-green"><i class="fa-solid fa-circle-check"></i></div>
+                            <div>
+                                <h4>K. Completed</h4>
+                                <p class="akpi-val" id="wkpi-val-K">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                        <div class="analytics-kpi glass-card" id="wkpi-L" role="button" tabindex="0" aria-label="Data Problems — click to view patients">
+                            <div class="analytics-kpi-icon icon-danger"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div>
+                                <h4>L. Data Problems</h4>
+                                <p class="akpi-val" id="wkpi-val-L">0</p>
+                                <span class="akpi-view-hint">View patients →</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </section>
+
+                <!-- 10. SETTINGS TAB -->
                 <section class="tab-pane" id="tab-settings">
                     <div class="settings-grid">
                         <div class="settings-card glass-card">
@@ -1059,6 +1183,52 @@
                     <table class="data-table">
                         <thead id="analytics-modal-thead"></thead>
                         <tbody id="analytics-modal-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Workflow Follow-up Patient List Modal -->
+    <div id="workflow-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="workflow-modal-title">
+        <div class="modal-card glass-card analytics-modal-card">
+            <div class="analytics-modal-header">
+                <div class="analytics-modal-title-group">
+                    <div class="analytics-modal-icon icon-danger" id="workflow-modal-icon-el"><i class="fa-solid fa-list-check"></i></div>
+                    <div>
+                        <h3 id="workflow-modal-title">Workflow Follow-up</h3>
+                        <p class="analytics-modal-subtitle" id="workflow-modal-count-label"></p>
+                    </div>
+                </div>
+                <div class="analytics-modal-actions">
+                    <button class="btn btn-secondary btn-sm" id="workflow-modal-why-btn" title="Why do patients appear in this list?">
+                        <i class="fa-solid fa-circle-question"></i> Why this list?
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="workflow-modal-print-btn" title="Print this patient list">
+                        <i class="fa-solid fa-print"></i> Print
+                    </button>
+                    <button class="btn-close-modal" id="close-workflow-modal-btn" aria-label="Close modal">&times;</button>
+                </div>
+            </div>
+            <div id="workflow-modal-why-panel" class="hidden">
+                <div class="reason-card analytics-modal-why-card">
+                    <div class="reason-card-icon"><i class="fa-solid fa-circle-info"></i></div>
+                    <div class="reason-card-body">
+                        <p class="reason-card-label">Conditions — why patients appear in this list</p>
+                        <p class="reason-card-text" id="workflow-modal-why-text"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="analytics-modal-body">
+                <div class="search-box analytics-modal-search-box">
+                    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                    <label for="workflow-modal-search" class="sr-only">Search patients in this list</label>
+                    <input type="text" id="workflow-modal-search" placeholder="Search by name, ID, or file number...">
+                </div>
+                <div class="responsive-table-wrapper analytics-modal-table-wrap">
+                    <table class="data-table">
+                        <thead id="workflow-modal-thead"></thead>
+                        <tbody id="workflow-modal-tbody"></tbody>
                     </table>
                 </div>
             </div>

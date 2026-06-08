@@ -513,6 +513,7 @@ function initApp() {
     setupMasterSearchDropdown();
     setupPatientSearch();
     setupAnalyticsModal();
+    setupWorkflowModal();
     setupTriageBanner();
     setupSidebarToggle();
 
@@ -635,6 +636,8 @@ function setupTabSwitching() {
                 renderBarriersTab();
             } else if (targetTab === 'analytics') {
                 renderAnalyticsTab();
+            } else if (targetTab === 'workflow') {
+                renderWorkflowTab();
             }
         });
     });
@@ -1078,6 +1081,18 @@ function updateBadges() {
     // Analytics badge = total issues across all 6 analyses
     const analyticsTotal = computeAnalyticsCounts();
     document.getElementById("badge-analytics").innerText = analyticsTotal.total;
+
+    // Workflow badge = distinct patients needing action (lists A-I + L)
+    let workflowActionCount = 0;
+    const ACTION_LISTS = new Set(['A','B','C','D','E','F','G','H','I','L']);
+    patientsData.forEach(pat => {
+        const lists = getPatientWorkflowLists(pat);
+        for (const id of lists) {
+            if (ACTION_LISTS.has(id)) { workflowActionCount++; break; }
+        }
+    });
+    const wBadge = document.getElementById("badge-workflow");
+    if (wBadge) wBadge.innerText = workflowActionCount;
 }
 
 // --- Filters & Grid Search ---
@@ -1139,6 +1154,7 @@ function setupFilterListeners() {
             renderOutpatientTab();
             renderBarriersTab();
             renderAnalyticsTab();
+            renderWorkflowTab();
             
             showToast("Filters cleared and reset", "info");
         });
@@ -3562,25 +3578,522 @@ function renderPatientSearchResults() {
 function setupPatientSearch() {
     const searchInput = document.getElementById("patient-search-input");
     const searchBtn = document.getElementById("patient-search-btn");
-    
+
     if (searchInput) {
         searchInput.addEventListener("keypress", (e) => {
             if (e.key === "Enter") {
                 renderPatientSearchResults();
             }
         });
-        
+
         searchInput.addEventListener("input", () => {
             if (searchInput.value.trim().length === 0) {
                 renderPatientSearchResults();
             }
         });
     }
-    
+
     if (searchBtn) {
         searchBtn.addEventListener("click", () => {
             renderPatientSearchResults();
         });
     }
+}
+
+// =============================================================================
+// WORKFLOW FOLLOW-UP ENGINE
+// Business-logic-driven automatic follow-up lists (A through L)
+// =============================================================================
+
+function containsTreatmentStr(v) {
+    return normalizeValue(v).includes('treatment');
+}
+
+function isPermitClearForChemo(v) {
+    return isApprovedValue(v) || normalizeValue(v) === 'not required' || isEmptyLike(v);
+}
+
+function treatmentPlanIndicatesChemo(v) {
+    const n = normalizeValue(v);
+    return n.includes('chemotherapy') || n.includes('chemo') || n.includes('protocol') || n.includes('approved');
+}
+
+function isNeedsFollowupStatus(v) {
+    // empty / "no" / "none" / "لا" = not applicable, no follow-up needed
+    if (isNoValue(v)) return false;
+    const n = normalizeValue(v);
+    return n === 'not sent' || isPendingValue(v) || isRejectedValue(v);
+}
+
+function isEffectiveTreatmentReferralApproved(pat) {
+    // Condition A: Type patient's referral = Treatment AND Treatment Referral Status = approved
+    if (isTreatmentValue(getPatientVal(pat, 'referralType')) &&
+        isApprovedValue(getPatientVal(pat, 'treatmentReferralStatus'))) return true;
+    // Condition B: Referral forms sent/types contains "treatment" AND Other Referral Status = approved
+    if (containsTreatmentStr(getPatientVal(pat, 'referralForms')) &&
+        isApprovedValue(getPatientVal(pat, 'otherReferralStatus'))) return true;
+    return false;
+}
+
+const WF_PROBLEM_LABELS = {
+    1: 'Patient notified but chemo date is missing',
+    2: 'Chemo date set but no approved treatment referral',
+    3: 'Chemo date set but permit status not approved',
+    4: 'Treatment referral approved but treatment plan empty',
+    5: 'Referral forms sent but other referral status empty',
+    6: 'Referral type is Treatment but treatment referral status empty',
+    7: 'Permit status approved but permit form not sent',
+    8: 'Other appt notified but other referral status is pending/rejected'
+};
+
+function getDataProblems(pat) {
+    const problems = [];
+    const refType      = getPatientVal(pat, 'referralType');
+    const treatStatus  = getPatientVal(pat, 'treatmentReferralStatus');
+    const forms        = getPatientVal(pat, 'referralForms');
+    const otherStatus  = getPatientVal(pat, 'otherReferralStatus');
+    const otherAppt    = getPatientVal(pat, 'otherAppt');
+    const permitSent   = getPatientVal(pat, 'permitSent');
+    const permitStatus = getPatientVal(pat, 'permitStatus');
+    const chemoDate    = getPatientVal(pat, 'chemoDate');
+    const notified     = getPatientVal(pat, 'notified');
+    const notifiedOther= getPatientVal(pat, 'notifiedOther');
+    const treatPlan    = getPatientVal(pat, 'treatmentPlan');
+    const eTRA         = isEffectiveTreatmentReferralApproved(pat);
+    const psN          = normalizeValue(permitStatus);
+
+    if (isYesValue(notified) && isEmptyLike(chemoDate)) problems.push(1);
+    if (!isEmptyLike(chemoDate) && !eTRA) problems.push(2);
+    if (!isEmptyLike(chemoDate) && (isPendingValue(permitStatus) || isRejectedValue(permitStatus) || psN === 'not sent')) problems.push(3);
+    if (eTRA && isEmptyLike(treatPlan)) problems.push(4);
+    if (!isEmptyLike(forms) && isEmptyLike(otherStatus)) problems.push(5);
+    if (isTreatmentValue(refType) && isEmptyLike(treatStatus)) problems.push(6);
+    if (isApprovedValue(permitStatus) && (isNoValue(permitSent) || normalizeValue(permitSent) === 'not sent')) problems.push(7);
+    if (!isEmptyLike(otherAppt) && isYesValue(notifiedOther) &&
+        (isPendingValue(otherStatus) || isRejectedValue(otherStatus) || normalizeValue(otherStatus) === 'not sent')) problems.push(8);
+    return problems;
+}
+
+function getPatientWorkflowLists(pat) {
+    const lists = new Set();
+    const refType      = getPatientVal(pat, 'referralType');
+    const treatStatus  = getPatientVal(pat, 'treatmentReferralStatus');
+    const forms        = getPatientVal(pat, 'referralForms');
+    const otherStatus  = getPatientVal(pat, 'otherReferralStatus');
+    const permitSent   = getPatientVal(pat, 'permitSent');
+    const otherAppt    = getPatientVal(pat, 'otherAppt');
+    const guidance     = getPatientVal(pat, 'guidance');
+    const treatPlan    = getPatientVal(pat, 'treatmentPlan');
+    const ncm          = getPatientVal(pat, 'ncm');
+    const permitStatus = getPatientVal(pat, 'permitStatus');
+    const chemoDate    = getPatientVal(pat, 'chemoDate');
+    const notified     = getPatientVal(pat, 'notified');
+    const notifiedOther= getPatientVal(pat, 'notifiedOther');
+    const eTRA         = isEffectiveTreatmentReferralApproved(pat);
+
+    // A: Treatment Referral Follow-up
+    if ((isTreatmentValue(refType) && isNeedsFollowupStatus(treatStatus)) ||
+        (containsTreatmentStr(forms) && isNeedsFollowupStatus(otherStatus))) lists.add('A');
+
+    // B: Other Referral Follow-up
+    if (!isEmptyLike(forms) && !containsTreatmentStr(forms) && isNeedsFollowupStatus(otherStatus)) lists.add('B');
+
+    // C: Treatment Plan Missing
+    if (eTRA && isEmptyLike(treatPlan)) lists.add('C');
+
+    // D: Permit Form Needed
+    if (eTRA && !isEmptyLike(treatPlan) && isNeedsFollowupStatus(permitSent)) lists.add('D');
+
+    // E: Permit Follow-up
+    if (eTRA && !isEmptyLike(treatPlan) && isNeedsFollowupStatus(permitStatus)) lists.add('E');
+
+    // F: Needs Chemotherapy Appointment
+    if (eTRA && !isEmptyLike(treatPlan) && treatmentPlanIndicatesChemo(treatPlan) &&
+        isPermitClearForChemo(permitStatus) && isEmptyLike(chemoDate)) lists.add('F');
+
+    // G: Patient Notification — chemo date set but patient not notified
+    if (!isEmptyLike(chemoDate) && isNeedsFollowupStatus(notified)) lists.add('G');
+
+    // H: Other Appointment Notification
+    if (!isEmptyLike(otherAppt) && isNeedsFollowupStatus(notifiedOther)) lists.add('H');
+
+    // I: Patient Guidance Follow-up
+    if (eTRA && isNeedsFollowupStatus(guidance)) lists.add('I');
+
+    // J: New Cases Meeting list (informational — does NOT block any other list)
+    if (isYesValue(ncm)) lists.add('J');
+
+    // K: Completed — all major pathway steps done
+    if (eTRA && !isEmptyLike(treatPlan) && isPermitClearForChemo(permitStatus) &&
+        !isEmptyLike(chemoDate) && isYesValue(notified) && isYesValue(guidance)) lists.add('K');
+
+    // L: Data Problems
+    if (getDataProblems(pat).length > 0) lists.add('L');
+
+    return lists;
+}
+
+let workflowResults = {};
+let _currentWorkflowList = 'A';
+
+function computeWorkflowCounts() {
+    const results = {};
+    for (const id of 'ABCDEFGHIJKL') results[id] = [];
+    patientsData.forEach(pat => {
+        getPatientWorkflowLists(pat).forEach(id => results[id].push(pat));
+    });
+    return results;
+}
+
+// --- Action label helpers ---
+
+function _wfTreatRefAction(pat) {
+    const refType = getPatientVal(pat, 'referralType');
+    const s = isTreatmentValue(refType)
+        ? getPatientVal(pat, 'treatmentReferralStatus')
+        : getPatientVal(pat, 'otherReferralStatus');
+    if (isPendingValue(s)) return 'Follow treatment referral approval';
+    if (isRejectedValue(s)) return 'Escalate or review rejection';
+    return 'Send treatment referral';
+}
+
+function _wfOtherRefAction(pat) {
+    const s = getPatientVal(pat, 'otherReferralStatus');
+    if (isPendingValue(s)) return 'Follow referral approval';
+    if (isRejectedValue(s)) return 'Escalate or review rejection';
+    return 'Send referral form';
+}
+
+function _wfPermitAction(pat) {
+    const s = getPatientVal(pat, 'permitStatus');
+    if (isPendingValue(s)) return 'Follow permit approval';
+    if (isRejectedValue(s)) return 'Escalate or resubmit permit';
+    return 'Send or confirm permit form';
+}
+
+// --- WORKFLOW_LISTS configuration ---
+
+const WORKFLOW_LISTS = {
+    A: {
+        title: "A. Treatment Referral Follow-up",
+        icon: "fa-solid fa-file-medical",
+        colorClass: "icon-danger",
+        why: "Patients appear when <strong>Type patient's referral = Treatment</strong> AND <strong>Treatment Referral Status</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em> — OR when <strong>Referral forms sent/types contains \"Treatment\"</strong> AND <strong>Other Referral Status</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = pathway not applicable to this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Referral Type", "Treatment Ref. Status", "Forms Sent", "Other Ref. Status", "Action Needed"],
+        renderCells: (pat) => {
+            const action = _wfTreatRefAction(pat);
+            const ts = getPatientVal(pat, 'treatmentReferralStatus');
+            const os = getPatientVal(pat, 'otherReferralStatus');
+            const actionClass = (isPendingValue(ts) || isPendingValue(os)) ? 'text-indigo'
+                              : (isRejectedValue(ts) || isRejectedValue(os)) ? 'text-danger'
+                              : 'text-warning';
+            return `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'referralType','-')}</td>
+                <td><span class="status-pill ${getPillClass(ts)}">${escapeHTML(ts||'-')}</span></td>
+                <td>${getEscapedPatientVal(pat,'referralForms','-')}</td>
+                <td><span class="status-pill ${getPillClass(os)}">${escapeHTML(os||'-')}</span></td>
+                <td class="${actionClass}"><strong>${escapeHTML(action)}</strong></td>`;
+        }
+    },
+    B: {
+        title: "B. Other Referral Follow-up",
+        icon: "fa-solid fa-file-circle-exclamation",
+        colorClass: "icon-amber",
+        why: "Patients appear when <strong>Referral forms sent/types</strong> is not empty, does <em>not</em> contain \"Treatment\", AND <strong>Other Referral Status</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = no referral follow-up needed for this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Forms Sent", "Other Referral Status", "Action Needed"],
+        renderCells: (pat) => {
+            const action = _wfOtherRefAction(pat);
+            const os = getPatientVal(pat, 'otherReferralStatus');
+            const actionClass = isPendingValue(os) ? 'text-indigo' : isRejectedValue(os) ? 'text-danger' : 'text-warning';
+            return `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'referralForms')}</td>
+                <td><span class="status-pill ${getPillClass(os)}">${escapeHTML(os||'-')}</span></td>
+                <td class="${actionClass}"><strong>${escapeHTML(action)}</strong></td>`;
+        }
+    },
+    C: {
+        title: "C. Treatment Plan Missing",
+        icon: "fa-solid fa-clipboard-question",
+        colorClass: "icon-amber",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong> (via either pathway) AND <strong>Treatment Plan is empty</strong>. A treatment plan must be documented before the permit and chemotherapy booking steps can proceed.",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Referral Type", "Effective Referral Status", "Action Needed"],
+        renderCells: (pat) => {
+            const rt = getPatientVal(pat, 'referralType');
+            const effStatus = isTreatmentValue(rt)
+                ? getPatientVal(pat, 'treatmentReferralStatus')
+                : getPatientVal(pat, 'otherReferralStatus');
+            return `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'referralType','-')}</td>
+                <td><span class="status-pill approved">${escapeHTML(effStatus||'Approved')}</span></td>
+                <td class="text-warning"><strong>Ask physician to complete the treatment plan</strong></td>`;
+        }
+    },
+    D: {
+        title: "D. Permit Form Needed",
+        icon: "fa-solid fa-passport",
+        colorClass: "icon-amber",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong>, <strong>Treatment Plan is filled</strong>, AND <strong>Permit form sent</strong> is explicitly <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = permit not required for this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Treatment Plan", "Permit Form Sent", "Action Needed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'treatmentPlan','-')}</td>
+                <td><span class="status-pill rejected">${getEscapedPatientVal(pat,'permitSent','Not sent')}</span></td>
+                <td class="text-warning"><strong>Send permit form</strong></td>`
+    },
+    E: {
+        title: "E. Permit Follow-up",
+        icon: "fa-solid fa-stamp",
+        colorClass: "icon-amber",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong>, Treatment Plan is filled, AND <strong>Permit Status</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = permit not required or not applicable — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Treatment Plan", "Permit Sent", "Permit Status", "Action Needed"],
+        renderCells: (pat) => {
+            const action = _wfPermitAction(pat);
+            const ps = getPatientVal(pat, 'permitStatus');
+            const actionClass = isPendingValue(ps) ? 'text-indigo' : isRejectedValue(ps) ? 'text-danger' : 'text-warning';
+            return `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'treatmentPlan','-')}</td>
+                <td>${getEscapedPatientVal(pat,'permitSent','-')}</td>
+                <td><span class="status-pill ${getPillClass(ps)}">${escapeHTML(ps||'-')}</span></td>
+                <td class="${actionClass}"><strong>${escapeHTML(action)}</strong></td>`;
+        }
+    },
+    F: {
+        title: "F. Needs Chemotherapy Appointment",
+        icon: "fa-solid fa-syringe",
+        colorClass: "icon-danger",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong>, Treatment Plan contains chemo/protocol keywords, <strong>Permit Status is approved, not required, or empty</strong> (i.e. permit is cleared or not needed), AND <strong>Chemotherapy Appointment Date is empty</strong>.<br><em>New Cases Meeting does NOT block this rule — NCM is informational only.</em>",
+        headers: ["Patient Name", "ID", "Clinic", "Division", "Coordinator", "Treatment Plan", "Permit Status", "Action Needed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'division','-')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'treatmentPlan','-')}</td>
+                <td><span class="status-pill approved">${getEscapedPatientVal(pat,'permitStatus','Cleared')}</span></td>
+                <td class="text-danger"><strong>Book chemotherapy appointment</strong></td>`
+    },
+    G: {
+        title: "G. Patient Notification — Chemo",
+        icon: "fa-solid fa-bell-slash",
+        colorClass: "icon-amber",
+        why: "Patients appear when <strong>Chemotherapy Appointment Date is not empty</strong> AND <strong>Patient Notified</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = notification not applicable for this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Chemo Appointment Date", "Patient Notified", "Action Needed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td class="text-green"><strong>${getEscapedPatientVal(pat,'chemoDate')}</strong></td>
+                <td><span class="status-pill rejected">${getEscapedPatientVal(pat,'notified','Not notified')}</span></td>
+                <td class="text-warning"><strong>Notify patient of chemo appointment</strong></td>`
+    },
+    H: {
+        title: "H. Other Appointment Notification",
+        icon: "fa-solid fa-calendar-check",
+        colorClass: "icon-indigo",
+        why: "Patients appear when <strong>Other Appointments and date</strong> is not empty AND <strong>Patient Notified of other appointments</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = notification not applicable for this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Other Appointments", "Notified of Other Appt", "Action Needed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td>${getEscapedPatientVal(pat,'otherAppt')}</td>
+                <td><span class="status-pill rejected">${getEscapedPatientVal(pat,'notifiedOther','Not notified')}</span></td>
+                <td class="text-indigo"><strong>Notify patient of other appointment</strong></td>`
+    },
+    I: {
+        title: "I. Patient Guidance Follow-up",
+        icon: "fa-solid fa-person-chalkboard",
+        colorClass: "icon-indigo",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong> AND <strong>Patient Guidance Completed</strong> is <em>not sent</em>, <em>pending</em>, or <em>rejected</em>.<br><strong>Empty / no / none = guidance not applicable for this patient — excluded.</strong>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Patient Guidance Completed", "Action Needed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td><span class="status-pill pending">${getEscapedPatientVal(pat,'guidance','Not completed')}</span></td>
+                <td class="text-indigo"><strong>Complete patient guidance / education</strong></td>`
+    },
+    J: {
+        title: "J. New Cases Meeting List",
+        icon: "fa-solid fa-user-doctor",
+        colorClass: "icon-indigo",
+        why: "<strong>Informational list only.</strong> Patients appear when <strong>New Cases Meeting = Yes</strong>. Patients here may simultaneously appear in any other follow-up list. New Cases Meeting does NOT block chemotherapy booking or any other workflow step.",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "NCM Decision", "Treatment Plan", "Chemo Date", "Case Status"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td class="text-indigo"><strong>${getEscapedPatientVal(pat,'ncmDecision','-')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'treatmentPlan','-')}</td>
+                <td>${getEscapedPatientVal(pat,'chemoDate','-')}</td>
+                <td><span class="status-pill ${getPillClass(getPatientVal(pat,'status'))}">${getEscapedPatientVal(pat,'status','-')}</span></td>`
+    },
+    K: {
+        title: "K. Completed — No Follow-up Needed",
+        icon: "fa-solid fa-circle-check",
+        colorClass: "icon-green",
+        why: "Patients appear when <strong>Effective Treatment Referral is Approved</strong>, Treatment Plan is filled, Permit is cleared (approved / not required / none), <strong>Chemotherapy Date is set</strong>, <strong>Patient Notified = Yes</strong>, AND <strong>Patient Guidance Completed = Yes</strong>. All major pathway steps are complete.",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Chemo Date", "Patient Notified", "Guidance Completed"],
+        renderCells: (pat) => `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td class="text-green"><strong>${getEscapedPatientVal(pat,'chemoDate')}</strong></td>
+                <td><span class="status-pill approved">${getEscapedPatientVal(pat,'notified')}</span></td>
+                <td><span class="status-pill approved">${getEscapedPatientVal(pat,'guidance')}</span></td>`
+    },
+    L: {
+        title: "L. Data Problems / Inconsistency",
+        icon: "fa-solid fa-triangle-exclamation",
+        colorClass: "icon-danger",
+        why: "Patients appear when any of 8 data inconsistency conditions fire — e.g., notified without chemo date, chemo date without approved referral, permit approved but not sent, etc. <em>Review and correct the patient record.</em>",
+        headers: ["Patient Name", "ID", "Clinic", "Coordinator", "Data Issues Found"],
+        renderCells: (pat) => {
+            const issues = getDataProblems(pat).map(n => WF_PROBLEM_LABELS[n]).join(' &bull; ');
+            return `<td><strong>${getEscapedPatientVal(pat,'name')}</strong></td>
+                <td>${getEscapedPatientVal(pat,'id')}</td>
+                <td>${getEscapedPatientVal(pat,'clinic')}</td>
+                <td>${getEscapedPatientVal(pat,'coordinator')}</td>
+                <td class="text-danger" style="max-width:360px;white-space:normal;line-height:1.4;">${issues}</td>`;
+        }
+    }
+};
+
+// --- Render / Tab ---
+
+function renderWorkflowTab() {
+    const counts = computeWorkflowCounts();
+    workflowResults = counts;
+    for (const id of 'ABCDEFGHIJKL') {
+        const el = document.getElementById(`wkpi-val-${id}`);
+        if (el) el.innerText = (counts[id] || []).length;
+    }
+}
+
+// --- Modal ---
+
+function setupWorkflowModal() {
+    for (const id of 'ABCDEFGHIJKL') {
+        const card = document.getElementById(`wkpi-${id}`);
+        if (!card) continue;
+        card.addEventListener('click', () => openWorkflowModal(id));
+        card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWorkflowModal(id); }
+        });
+    }
+
+    const modal = document.getElementById('workflow-modal');
+    document.getElementById('close-workflow-modal-btn')?.addEventListener('click', () => modal.classList.add('hidden'));
+    modal?.addEventListener('click', e => { if (e.target === modal) modal.classList.add('hidden'); });
+
+    document.getElementById('workflow-modal-why-btn')?.addEventListener('click', () => {
+        document.getElementById('workflow-modal-why-panel').classList.toggle('hidden');
+        document.getElementById('workflow-modal-why-btn').classList.toggle('reason-active');
+    });
+
+    document.getElementById('workflow-modal-search')?.addEventListener('input', renderWorkflowModalTable);
+    document.getElementById('workflow-modal-print-btn')?.addEventListener('click', printWorkflowModal);
+}
+
+function openWorkflowModal(listId) {
+    const list = WORKFLOW_LISTS[listId];
+    if (!list) return;
+    _currentWorkflowList = listId;
+
+    document.getElementById('workflow-modal-title').textContent = list.title;
+    const iconEl = document.getElementById('workflow-modal-icon-el');
+    iconEl.className = `analytics-modal-icon ${list.colorClass}`;
+    iconEl.innerHTML = `<i class="${list.icon}"></i>`;
+    document.getElementById('workflow-modal-why-text').innerHTML = list.why;
+
+    document.getElementById('workflow-modal-why-panel')?.classList.add('hidden');
+    document.getElementById('workflow-modal-why-btn')?.classList.remove('reason-active');
+
+    const thead = document.getElementById('workflow-modal-thead');
+    thead.innerHTML = '<tr>' + list.headers.map(h => `<th>${escapeHTML(h)}</th>`).join('') + '<th></th></tr>';
+
+    if (document.getElementById('workflow-modal-search')) document.getElementById('workflow-modal-search').value = '';
+    renderWorkflowModalTable();
+
+    document.getElementById('workflow-modal').classList.remove('hidden');
+}
+
+function renderWorkflowModalTable() {
+    const list     = WORKFLOW_LISTS[_currentWorkflowList];
+    const patients = workflowResults[_currentWorkflowList] || [];
+    const searchVal = (document.getElementById('workflow-modal-search')?.value || '').toLowerCase();
+
+    const filtered = searchVal ? patients.filter(pat => {
+        const name = getPatientVal(pat, 'name').toLowerCase();
+        const id   = getPatientVal(pat, 'id').toLowerCase();
+        const file = getPatientVal(pat, 'file').toLowerCase();
+        return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
+    }) : patients;
+
+    const countLabel = document.getElementById('workflow-modal-count-label');
+    if (countLabel) countLabel.textContent = `${filtered.length} patient${filtered.length !== 1 ? 's' : ''}`;
+
+    const tbody = document.getElementById('workflow-modal-tbody');
+    if (filtered.length === 0) {
+        const colCount = list.headers.length + 1;
+        tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="table-empty-state"><i class="fa-solid fa-circle-check"></i><h4>No patients</h4><p>${searchVal ? 'No results match your search.' : 'No cases match this filter.'}</p></div></td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = '';
+    filtered.forEach(pat => {
+        const tr = document.createElement('tr');
+        if (hasActiveBarrier(pat)) tr.classList.add('has-barrier');
+        tr.setAttribute('data-patient-id', getPatientVal(pat, 'id'));
+        tr.innerHTML = list.renderCells(pat) + `<td><button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i></button></td>`;
+        tr.querySelector('.open-details-btn').addEventListener('click', e => { e.stopPropagation(); openPatientDrawer(pat); });
+        tr.addEventListener('click', () => openPatientDrawer(pat));
+        tbody.appendChild(tr);
+    });
+}
+
+function printWorkflowModal() {
+    const list     = WORKFLOW_LISTS[_currentWorkflowList];
+    const patients = workflowResults[_currentWorkflowList] || [];
+    const searchVal = (document.getElementById('workflow-modal-search')?.value || '').toLowerCase();
+    const filtered  = searchVal ? patients.filter(pat => {
+        const name = getPatientVal(pat, 'name').toLowerCase();
+        const id   = getPatientVal(pat, 'id').toLowerCase();
+        const file = getPatientVal(pat, 'file').toLowerCase();
+        return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
+    }) : patients;
+
+    if (filtered.length === 0) { showToast("No patients to print.", "info"); return; }
+
+    const relevantKeys = new Set(['name', 'id', 'clinic']);
+    list.headers.forEach(h => { const key = getColumnKeyFromHeaderText(h); if (key) relevantKeys.add(key); });
+
+    const container = document.getElementById("print-column-checkboxes");
+    if (!container) return;
+    container.innerHTML = "";
+    ALL_EXCEL_COLUMNS.forEach(col => {
+        const label = document.createElement("label");
+        label.className = "column-checkbox-label";
+        label.innerHTML = `<input type="checkbox" data-key="${col.key}" ${relevantKeys.has(col.key) ? 'checked' : ''}><span>${col.label}</span>`;
+        container.appendChild(label);
+    });
+
+    currentPrintConfig.tabName = list.title;
+    currentPrintConfig.patientsToPrint = filtered;
+    document.getElementById("print-column-modal").classList.remove("hidden");
 }
 
