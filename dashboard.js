@@ -7,6 +7,8 @@ let currentSort = { column: 'Patient Name', direction: 'asc' };
 let pagination = { currentPage: 1, pageSize: 25 };
 let currentQuickFilters = new Set();
 let activeColumnFilters = [];
+const EMPTY_COLUMN_FILTER_VALUE = "__EMPTY__";
+const EMPTY_COLUMN_FILTER_LABEL = "Empty / No data";
 
 // --- App Configuration & Shared Utilities ---
 const STORAGE_KEYS = Object.freeze({
@@ -506,9 +508,12 @@ function updateColumnFilterValueOptions() {
         valueSelect.disabled = true;
         return;
     }
-    const values = getColumnFilterValues(fieldKey).map(value => ({ value, label: value }));
-    setSelectOptions(valueSelect, values, values.length ? "Select value" : "No values found");
-    valueSelect.disabled = values.length === 0;
+    const values = [
+        { value: EMPTY_COLUMN_FILTER_VALUE, label: EMPTY_COLUMN_FILTER_LABEL },
+        ...getColumnFilterValues(fieldKey).map(value => ({ value, label: value }))
+    ];
+    setSelectOptions(valueSelect, values, "Select value");
+    valueSelect.disabled = false;
 }
 
 function renderActiveColumnFilters() {
@@ -526,7 +531,8 @@ function renderActiveColumnFilters() {
         const chip = document.createElement("span");
         chip.className = "column-filter-chip";
         const text = document.createElement("span");
-        text.textContent = `${getColumnFilterLabel(filter.key)}: ${filter.value}`;
+        const filterValueLabel = filter.value === EMPTY_COLUMN_FILTER_VALUE ? EMPTY_COLUMN_FILTER_LABEL : filter.value;
+        text.textContent = `${getColumnFilterLabel(filter.key)}: ${filterValueLabel}`;
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.setAttribute("aria-label", `Remove ${getColumnFilterLabel(filter.key)} filter`);
@@ -570,7 +576,10 @@ function matchesActiveColumnFilters(pat) {
         filtersByColumn.get(filter.key).add(filter.value);
     });
     for (const [key, values] of filtersByColumn.entries()) {
-        if (!values.has(getPatientVal(pat, key))) return false;
+        const patientValue = getPatientVal(pat, key);
+        const matchesEmpty = values.has(EMPTY_COLUMN_FILTER_VALUE) && isEmptyLike(patientValue);
+        const matchesExactValue = values.has(patientValue);
+        if (!matchesEmpty && !matchesExactValue) return false;
     }
     return true;
 }
@@ -1843,25 +1852,20 @@ function openPatientDrawer(pat) {
     document.getElementById("drawer-patient-id").innerText = getPatientVal(pat, 'id') || '-';
     document.getElementById("drawer-patient-file").innerText = getPatientVal(pat, 'file') || '-';
     
-    // Redesigned Top Status Summary Board
-    const csBadge = document.getElementById("drawer-case-status-badge");
-    const trBadge = document.getElementById("drawer-referral-status-badge");
-    const psBadge = document.getElementById("drawer-permit-status-badge");
+    // Redesigned Top Summary Board
+    const referralTypeSummary = document.getElementById("drawer-referral-type-summary");
+    const referralFormsSummary = document.getElementById("drawer-referral-forms-summary");
+    const treatmentPlanSummary = document.getElementById("drawer-treatment-plan-summary");
     const chBadge = document.getElementById("drawer-chemo-date-badge");
     
-    const caseSt = getPatientVal(pat, 'status') || 'none';
-    const trSt = getPatientVal(pat, 'treatmentReferralStatus') || 'none';
-    const pmSt = getPatientVal(pat, 'permitStatus') || 'none';
+    const referralType = getPatientVal(pat, 'referralType') || '-';
+    const referralForms = getPatientVal(pat, 'referralForms') || '-';
+    const treatmentPlan = getPatientVal(pat, 'treatmentPlan') || '-';
     const chDt = getPatientVal(pat, 'chemoDate') || '-';
     
-    csBadge.innerText = caseSt;
-    csBadge.className = `sb-val status-pill ${getPillClass(caseSt)}`;
-    
-    trBadge.innerText = trSt;
-    trBadge.className = `sb-val status-pill ${getPillClass(trSt)}`;
-    
-    psBadge.innerText = pmSt;
-    psBadge.className = `sb-val status-pill ${getPillClass(pmSt)}`;
+    referralTypeSummary.innerText = referralType;
+    referralFormsSummary.innerText = referralForms;
+    treatmentPlanSummary.innerText = treatmentPlan;
     
     chBadge.innerText = chDt && chDt !== '0' && chDt !== '0.0' ? chDt : 'Not Scheduled';
     chBadge.className = `sb-val ${chDt && chDt !== '0' && chDt !== '0.0' ? 'text-green' : 'text-warning'}`;

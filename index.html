@@ -986,22 +986,22 @@
 
             <!-- Patient Status Summary Board -->
             <div class="drawer-status-board">
-                <div class="status-board-card">
-                    <span class="sb-label">Case status</span>
-                    <span class="sb-help">Overall file state</span>
-                    <span class="sb-val" id="drawer-case-status-badge">-</span>
+                <div class="status-board-card summary-emphasis-card">
+                    <span class="sb-label">Patient Referral Type</span>
+                    <span class="sb-help">Treatment, evaluation, follow-up, or other type</span>
+                    <span class="sb-val" id="drawer-referral-type-summary">-</span>
                 </div>
-                <div class="status-board-card">
-                    <span class="sb-label">Treatment referral</span>
-                    <span class="sb-help">Approval pathway</span>
-                    <span class="sb-val" id="drawer-referral-status-badge">-</span>
+                <div class="status-board-card summary-emphasis-card">
+                    <span class="sb-label">Referral Forms Sent</span>
+                    <span class="sb-help">Forms sent to another service</span>
+                    <span class="sb-val" id="drawer-referral-forms-summary">-</span>
                 </div>
-                <div class="status-board-card">
-                    <span class="sb-label">Permit status</span>
-                    <span class="sb-help">Insurance/admin permit</span>
-                    <span class="sb-val" id="drawer-permit-status-badge">-</span>
+                <div class="status-board-card summary-emphasis-card">
+                    <span class="sb-label">Treatment Plan</span>
+                    <span class="sb-help">Approved protocol or planned treatment</span>
+                    <span class="sb-val" id="drawer-treatment-plan-summary">-</span>
                 </div>
-                <div class="status-board-card">
+                <div class="status-board-card summary-emphasis-card">
                     <span class="sb-label">Chemo date</span>
                     <span class="sb-help">First scheduled session</span>
                     <span class="sb-val text-green font-weight-bold" id="drawer-chemo-date-badge">-</span>
@@ -1082,12 +1082,12 @@
                     <h4><i class="fa-solid fa-receipt"></i> Referrals & NCM</h4>
                     <p class="drawer-card-subtitle">Shows what was referred, whether the case needs NCM review, and the referral decision status.</p>
                     <div class="drawer-card-grid">
-                        <div class="data-item">
+                        <div class="data-item data-item-emphasis">
                             <span class="label"><i class="fa-solid fa-share-nodes"></i> Patient Referral Type</span>
                             <span class="field-help">Treatment, evaluation, follow-up, or other referral type</span>
                             <span class="value" id="drawer-referral-type">-</span>
                         </div>
-                        <div class="data-item">
+                        <div class="data-item data-item-emphasis">
                             <span class="label"><i class="fa-solid fa-file-invoice"></i> Referral Forms Sent</span>
                             <span class="field-help">Forms already sent to another service</span>
                             <span class="value" id="drawer-referral-forms">-</span>
@@ -1112,7 +1112,7 @@
                             <span class="field-help">Decision or recommendation from the meeting</span>
                             <span class="value font-weight-bold text-indigo" id="drawer-ncm-decision">-</span>
                         </div>
-                        <div class="data-item col-span-2">
+                        <div class="data-item data-item-emphasis col-span-2">
                             <span class="label"><i class="fa-solid fa-file-medical"></i> Treatment Plan</span>
                             <span class="field-help">Approved protocol or planned oncology treatment</span>
                             <span class="value" id="drawer-treatment-plan">-</span>

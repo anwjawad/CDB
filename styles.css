@@ -4842,6 +4842,80 @@ body {
     overflow-wrap: anywhere;
 }
 
+.summary-emphasis-card {
+    position: relative;
+    overflow: hidden;
+    min-height: 108px;
+    padding: 12px 10px;
+    background:
+        linear-gradient(180deg, rgba(14, 165, 233, 0.13), rgba(15, 23, 42, 0.04)),
+        var(--surface-control);
+    border-color: rgba(125, 211, 252, 0.36);
+    box-shadow: inset 0 4px 0 rgba(14, 165, 233, 0.82);
+}
+
+.summary-emphasis-card .sb-label {
+    display: block;
+    color: #7dd3fc;
+    font-size: 10px;
+    line-height: 1.25;
+    letter-spacing: 0.055em;
+}
+
+.summary-emphasis-card .sb-help {
+    color: rgba(226, 232, 240, 0.68);
+    max-width: 18ch;
+}
+
+.summary-emphasis-card .sb-val {
+    display: block;
+    width: 100%;
+    margin-top: 9px;
+    padding: 7px 8px;
+    border-radius: 7px;
+    background: rgba(2, 6, 23, 0.28);
+    border: 1px solid rgba(226, 232, 240, 0.08);
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 800;
+    line-height: 1.3;
+    letter-spacing: 0;
+    max-height: 58px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.summary-emphasis-card #drawer-chemo-date-badge {
+    background: rgba(22, 163, 74, 0.12);
+    border-color: rgba(34, 197, 94, 0.25);
+}
+
+.light-theme .summary-emphasis-card {
+    background:
+        linear-gradient(180deg, rgba(2, 132, 199, 0.1), rgba(255, 255, 255, 0.72)),
+        var(--surface-control);
+    border-color: rgba(2, 132, 199, 0.24);
+    box-shadow: inset 0 4px 0 rgba(2, 132, 199, 0.58);
+}
+
+.light-theme .summary-emphasis-card .sb-label {
+    color: #0369a1;
+}
+
+.light-theme .summary-emphasis-card .sb-help {
+    color: rgba(51, 65, 85, 0.72);
+}
+
+.light-theme .summary-emphasis-card .sb-val {
+    background: rgba(255, 255, 255, 0.82);
+    border-color: rgba(2, 132, 199, 0.14);
+}
+
+.light-theme .summary-emphasis-card #drawer-chemo-date-badge {
+    background: rgba(22, 163, 74, 0.1);
+    border-color: rgba(22, 163, 74, 0.18);
+}
+
 .drawer-card {
     padding: 16px;
 }
@@ -4893,6 +4967,39 @@ body {
     border-top: 1px solid rgba(255, 255, 255, 0.05);
     min-height: 28px;
     overflow-wrap: anywhere;
+}
+
+.data-item-emphasis {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.16), rgba(99, 102, 241, 0.08));
+    border-color: rgba(125, 211, 252, 0.42);
+    box-shadow: inset 3px 0 0 rgba(14, 165, 233, 0.85);
+}
+
+.data-item-emphasis .label {
+    color: #7dd3fc;
+}
+
+.data-item-emphasis .field-help {
+    color: rgba(226, 232, 240, 0.78);
+}
+
+.data-item-emphasis .value {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.light-theme .data-item-emphasis {
+    background: linear-gradient(135deg, rgba(2, 132, 199, 0.12), rgba(99, 102, 241, 0.07));
+    border-color: rgba(2, 132, 199, 0.28);
+}
+
+.light-theme .data-item-emphasis .label {
+    color: #0369a1;
+}
+
+.light-theme .data-item-emphasis .field-help {
+    color: rgba(51, 65, 85, 0.72);
 }
 
 .light-theme .data-item .value {
