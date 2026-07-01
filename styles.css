@@ -563,6 +563,76 @@ body {
     flex-wrap: wrap;
 }
 
+.column-filters-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.column-filter-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.column-filter-action {
+    flex-grow: 0;
+}
+
+.column-filter-action .btn {
+    min-height: 38px;
+    white-space: nowrap;
+}
+
+.active-column-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 28px;
+    align-items: center;
+}
+
+.column-filter-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.column-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 5px 8px 5px 10px;
+    border-radius: 20px;
+    border: 1px solid rgba(14, 165, 233, 0.35);
+    background: rgba(14, 165, 233, 0.12);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.column-filter-chip span {
+    overflow-wrap: anywhere;
+}
+
+.column-filter-chip button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: inherit;
+    cursor: pointer;
+}
+
+.column-filter-chip button:hover {
+    background: rgba(239, 68, 68, 0.25);
+}
+
 .pill-btn {
     padding: 6px 12px;
     font-size: 12px;
@@ -4687,4 +4757,176 @@ body {
 }
 @media (max-width: 768px) {
     .workflow-summary-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* --- Patient Details Drawer Clarity Refresh --- */
+.details-drawer {
+    width: min(760px, 96vw);
+}
+
+.drawer-header {
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.drawer-header-title {
+    min-width: 0;
+}
+
+.drawer-header-title h2 {
+    font-size: clamp(18px, 2vw, 24px);
+    line-height: 1.15;
+}
+
+.drawer-header-title p {
+    margin-top: 6px;
+    font-size: 12px;
+}
+
+.drawer-identity-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.drawer-identity-row span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 9px;
+    border-radius: 7px;
+    background: var(--surface-control);
+    border: 1px solid var(--card-border);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+}
+
+.drawer-identity-row strong {
+    color: var(--text-primary);
+    font-weight: 700;
+}
+
+.drawer-body {
+    gap: 14px;
+}
+
+.drawer-status-board {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.status-board-card {
+    min-height: 86px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.status-board-card .sb-help {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font-size: 10.5px;
+    line-height: 1.25;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.status-board-card .sb-val {
+    align-self: flex-start;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.drawer-card {
+    padding: 16px;
+}
+
+.drawer-card h4 {
+    margin-bottom: 6px;
+    color: var(--text-primary);
+}
+
+.drawer-card-subtitle {
+    margin: 0 0 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.drawer-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.data-item {
+    gap: 5px;
+    min-height: 96px;
+    padding: 11px 12px;
+}
+
+.data-item .label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-primary);
+    font-size: 11px;
+    line-height: 1.25;
+}
+
+.data-item .field-help {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.35;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.data-item .value {
+    margin-top: auto;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    min-height: 28px;
+    overflow-wrap: anywhere;
+}
+
+.light-theme .data-item .value {
+    border-top-color: rgba(0, 0, 0, 0.06);
+}
+
+.drawer-action-hint-container {
+    align-items: flex-start;
+}
+
+.action-hint-content h4 {
+    color: var(--text-primary);
+}
+
+.barrier-box,
+.notes-box {
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 12px;
+    background: var(--surface-control);
+}
+
+@media (max-width: 720px) {
+    .details-drawer {
+        width: 100vw;
+        max-width: 100vw;
+    }
+
+    .drawer-status-board,
+    .drawer-card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .data-item {
+        min-height: auto;
+    }
 }

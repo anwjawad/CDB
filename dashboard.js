@@ -5,7 +5,8 @@ let filteredPatients = [];
 let charts = {};
 let currentSort = { column: 'Patient Name', direction: 'asc' };
 let pagination = { currentPage: 1, pageSize: 25 };
-let currentQuickFilter = 'all';
+let currentQuickFilters = new Set();
+let activeColumnFilters = [];
 
 // --- App Configuration & Shared Utilities ---
 const STORAGE_KEYS = Object.freeze({
@@ -381,6 +382,199 @@ function switchToMasterTab() {
     }
 }
 
+function syncQuickFilterButtons() {
+    const pillBtns = document.querySelectorAll(".pill-btn");
+    pillBtns.forEach(btn => {
+        const filterName = btn.getAttribute("data-filter") || "all";
+        const isActive = filterName === "all"
+            ? currentQuickFilters.size === 0
+            : currentQuickFilters.has(filterName);
+        btn.classList.toggle("active", isActive);
+        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+}
+
+function setQuickFilters(filters = []) {
+    currentQuickFilters = new Set((filters || []).filter(filterName => filterName && filterName !== "all"));
+    syncQuickFilterButtons();
+}
+
+function toggleQuickFilter(filterName) {
+    if (!filterName || filterName === "all") {
+        setQuickFilters([]);
+        return;
+    }
+    if (currentQuickFilters.has(filterName)) {
+        currentQuickFilters.delete(filterName);
+    } else {
+        currentQuickFilters.add(filterName);
+    }
+    syncQuickFilterButtons();
+}
+
+function matchesPatientQuickFilter(pat, filterName) {
+    if (filterName === 'barriers') {
+        return hasActiveBarrier(pat);
+    }
+    if (filterName === 'pending-referrals') {
+        return isPendingValue(getPatientVal(pat, 'treatmentReferralStatus'));
+    }
+    if (filterName === 'ncm-cases') {
+        return isYesValue(getPatientVal(pat, 'ncm'));
+    }
+    if (filterName === 'permit-stage') {
+        return isYesValue(getPatientVal(pat, 'permitSent'));
+    }
+    if (filterName === 'chemo-missing') {
+        return !isValidDateValue(getPatientVal(pat, 'chemoDate'));
+    }
+    if (filterName === 'chemo-scheduled') {
+        return isValidDateValue(getPatientVal(pat, 'chemoDate'));
+    }
+    if (filterName === 'permit-pending') {
+        const permitSent = getPatientVal(pat, 'permitSent');
+        const permitStatus = getPatientVal(pat, 'permitStatus');
+        return isYesValue(permitSent) && (isPendingValue(permitStatus) || isEmptyLike(permitStatus));
+    }
+    if (filterName === 'other-referral-pending') {
+        const forms = getPatientVal(pat, 'referralForms');
+        const otherStatus = getPatientVal(pat, 'otherReferralStatus');
+        return !isEmptyLike(forms) && !isNoValue(forms) && isPendingValue(otherStatus);
+    }
+    if (filterName === 'not-notified') {
+        return isValidDateValue(getPatientVal(pat, 'chemoDate')) && isNoValue(getPatientVal(pat, 'notified'));
+    }
+    if (filterName === 'guidance-pending') {
+        return isEffectiveTreatmentReferralApproved(pat) && isNeedsFollowupStatus(getPatientVal(pat, 'guidance'));
+    }
+    if (filterName === 'data-problems') {
+        return getDataProblems(pat).length > 0;
+    }
+    return true;
+}
+
+function matchesSelectedQuickFilters(pat) {
+    if (currentQuickFilters.size === 0) return true;
+    return [...currentQuickFilters].every(filterName => matchesPatientQuickFilter(pat, filterName));
+}
+
+function getColumnFilterLabel(key) {
+    const column = ALL_EXCEL_COLUMNS.find(col => col.key === key);
+    return column ? column.label : key;
+}
+
+function getColumnFilterValues(key) {
+    const values = new Set();
+    patientsData.forEach(pat => {
+        const value = getPatientVal(pat, key);
+        if (!isEmptyLike(value)) values.add(value);
+    });
+    return [...values].sort((a, b) => a.localeCompare(b));
+}
+
+function setSelectOptions(selectEl, options, placeholder) {
+    if (!selectEl) return;
+    selectEl.textContent = "";
+    const placeholderOption = document.createElement("option");
+    placeholderOption.value = "";
+    placeholderOption.textContent = placeholder;
+    selectEl.appendChild(placeholderOption);
+    options.forEach(option => {
+        const opt = document.createElement("option");
+        opt.value = option.value;
+        opt.textContent = option.label;
+        selectEl.appendChild(opt);
+    });
+}
+
+function populateColumnFilterFields() {
+    const fieldSelect = document.getElementById("column-filter-field");
+    const valueSelect = document.getElementById("column-filter-value");
+    const options = ALL_EXCEL_COLUMNS.map(col => ({ value: col.key, label: col.label }));
+    setSelectOptions(fieldSelect, options, "Select field");
+    setSelectOptions(valueSelect, [], "Select value");
+    if (valueSelect) valueSelect.disabled = true;
+}
+
+function updateColumnFilterValueOptions() {
+    const fieldSelect = document.getElementById("column-filter-field");
+    const valueSelect = document.getElementById("column-filter-value");
+    if (!fieldSelect || !valueSelect) return;
+    const fieldKey = fieldSelect.value;
+    if (!fieldKey) {
+        setSelectOptions(valueSelect, [], "Select value");
+        valueSelect.disabled = true;
+        return;
+    }
+    const values = getColumnFilterValues(fieldKey).map(value => ({ value, label: value }));
+    setSelectOptions(valueSelect, values, values.length ? "Select value" : "No values found");
+    valueSelect.disabled = values.length === 0;
+}
+
+function renderActiveColumnFilters() {
+    const container = document.getElementById("active-column-filters");
+    if (!container) return;
+    container.textContent = "";
+    if (activeColumnFilters.length === 0) {
+        const empty = document.createElement("span");
+        empty.className = "column-filter-empty";
+        empty.textContent = "No column filters selected";
+        container.appendChild(empty);
+        return;
+    }
+    activeColumnFilters.forEach((filter, index) => {
+        const chip = document.createElement("span");
+        chip.className = "column-filter-chip";
+        const text = document.createElement("span");
+        text.textContent = `${getColumnFilterLabel(filter.key)}: ${filter.value}`;
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.setAttribute("aria-label", `Remove ${getColumnFilterLabel(filter.key)} filter`);
+        removeBtn.dataset.index = String(index);
+        removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        chip.appendChild(text);
+        chip.appendChild(removeBtn);
+        container.appendChild(chip);
+    });
+}
+
+function addActiveColumnFilter() {
+    const fieldSelect = document.getElementById("column-filter-field");
+    const valueSelect = document.getElementById("column-filter-value");
+    if (!fieldSelect || !valueSelect || !fieldSelect.value || !valueSelect.value) {
+        showToast("Select a field and value first.", "info");
+        return;
+    }
+    const nextFilter = { key: fieldSelect.value, value: valueSelect.value };
+    const exists = activeColumnFilters.some(filter => filter.key === nextFilter.key && filter.value === nextFilter.value);
+    if (exists) {
+        showToast("This column filter is already selected.", "info");
+        return;
+    }
+    activeColumnFilters.push(nextFilter);
+    renderActiveColumnFilters();
+    pagination.currentPage = 1;
+    applyFilters();
+}
+
+function clearActiveColumnFilters() {
+    activeColumnFilters = [];
+    renderActiveColumnFilters();
+}
+
+function matchesActiveColumnFilters(pat) {
+    if (activeColumnFilters.length === 0) return true;
+    const filtersByColumn = new Map();
+    activeColumnFilters.forEach(filter => {
+        if (!filtersByColumn.has(filter.key)) filtersByColumn.set(filter.key, new Set());
+        filtersByColumn.get(filter.key).add(filter.value);
+    });
+    for (const [key, values] of filtersByColumn.entries()) {
+        if (!values.has(getPatientVal(pat, key))) return false;
+    }
+    return true;
+}
+
 function setupInteractiveKPIs() {
     // 1. KPI Cards
     const kpiTotal = document.getElementById("kpi-total-patients");
@@ -393,10 +587,9 @@ function setupInteractiveKPIs() {
         const card = kpiTotal.closest(".kpi-card");
         if (card) {
             card.addEventListener("click", () => {
-                const pill = document.querySelector(".pill-btn[data-filter='all']");
-                if (pill) {
-                    pill.click();
-                }
+                setQuickFilters([]);
+                pagination.currentPage = 1;
+                applyFilters();
                 switchToMasterTab();
             });
         }
@@ -405,10 +598,9 @@ function setupInteractiveKPIs() {
         const card = kpiActive.closest(".kpi-card");
         if (card) {
             card.addEventListener("click", () => {
-                const pill = document.querySelector(".pill-btn[data-filter='all']");
-                if (pill) {
-                    pill.click();
-                }
+                setQuickFilters([]);
+                pagination.currentPage = 1;
+                applyFilters();
                 switchToMasterTab();
             });
         }
@@ -417,10 +609,9 @@ function setupInteractiveKPIs() {
         const card = kpiPending.closest(".kpi-card");
         if (card) {
             card.addEventListener("click", () => {
-                const pill = document.querySelector(".pill-btn[data-filter='pending-referrals']");
-                if (pill) {
-                    pill.click();
-                }
+                setQuickFilters(['pending-referrals']);
+                pagination.currentPage = 1;
+                applyFilters();
                 switchToMasterTab();
             });
         }
@@ -429,10 +620,9 @@ function setupInteractiveKPIs() {
         const card = kpiNcm.closest(".kpi-card");
         if (card) {
             card.addEventListener("click", () => {
-                const pill = document.querySelector(".pill-btn[data-filter='ncm-cases']");
-                if (pill) {
-                    pill.click();
-                }
+                setQuickFilters(['ncm-cases']);
+                pagination.currentPage = 1;
+                applyFilters();
                 switchToMasterTab();
             });
         }
@@ -441,10 +631,9 @@ function setupInteractiveKPIs() {
         const card = kpiBarriers.closest(".kpi-card");
         if (card) {
             card.addEventListener("click", () => {
-                const pill = document.querySelector(".pill-btn[data-filter='barriers']");
-                if (pill) {
-                    pill.click();
-                }
+                setQuickFilters(['barriers']);
+                pagination.currentPage = 1;
+                applyFilters();
                 switchToMasterTab();
             });
         }
@@ -468,24 +657,9 @@ function setupInteractiveKPIs() {
                 filterName = 'chemo-scheduled';
             }
 
-            // Find matching pill
-            const pillBtns = document.querySelectorAll(".pill-btn");
-            let foundPill = false;
-            pillBtns.forEach(btn => {
-                if (btn.getAttribute("data-filter") === filterName) {
-                    btn.click();
-                    foundPill = true;
-                }
-            });
-
-            if (!foundPill && filterName === 'chemo-scheduled') {
-                // special case since there is no pill for chemo-scheduled,
-                // we remove active class from all pills and set currentQuickFilter directly
-                pillBtns.forEach(btn => btn.classList.remove("active"));
-                currentQuickFilter = 'chemo-scheduled';
-                pagination.currentPage = 1;
-                applyFilters();
-            }
+            setQuickFilters(filterName === 'all' ? [] : [filterName]);
+            pagination.currentPage = 1;
+            applyFilters();
 
             switchToMasterTab();
         });
@@ -989,9 +1163,16 @@ function populateFilterOptions() {
     const populateDropdown = (elementId, items) => {
         const el = document.getElementById(elementId);
         if (!el) return;
-        el.innerHTML = '<option value="">All</option>';
+        el.textContent = "";
+        const allOption = document.createElement("option");
+        allOption.value = "";
+        allOption.textContent = "All";
+        el.appendChild(allOption);
         [...items].sort().forEach(item => {
-            el.innerHTML += `<option value="${item}">${item}</option>`;
+            const option = document.createElement("option");
+            option.value = item;
+            option.textContent = item;
+            el.appendChild(option);
         });
     };
 
@@ -999,6 +1180,8 @@ function populateFilterOptions() {
     populateDropdown("filter-division", divisions);
     populateDropdown("filter-coordinator", coordinators);
     populateDropdown("filter-status", statuses);
+    populateColumnFilterFields();
+    renderActiveColumnFilters();
 }
 
 // --- Calculate KPIs ---
@@ -1103,6 +1286,9 @@ function setupFilterListeners() {
     const filterCoordinator = document.getElementById("filter-coordinator");
     const filterStatus = document.getElementById("filter-status");
     const clearBtn = document.getElementById("clear-filters-btn");
+    const columnFieldSelect = document.getElementById("column-filter-field");
+    const addColumnFilterBtn = document.getElementById("add-column-filter-btn");
+    const activeColumnFiltersEl = document.getElementById("active-column-filters");
     
     const elements = [searchInput, filterClinic, filterDivision, filterCoordinator, filterStatus];
     
@@ -1118,14 +1304,34 @@ function setupFilterListeners() {
     // Quick filter pills listener
     const pillBtns = document.querySelectorAll(".pill-btn");
     pillBtns.forEach(btn => {
+        btn.setAttribute("aria-pressed", btn.classList.contains("active") ? "true" : "false");
         btn.addEventListener("click", () => {
-            pillBtns.forEach(b => b.classList.remove("active"));
-            btn.classList.add("active");
-            currentQuickFilter = btn.getAttribute("data-filter") || 'all';
+            toggleQuickFilter(btn.getAttribute("data-filter") || 'all');
             pagination.currentPage = 1;
             applyFilters();
         });
     });
+
+    if (columnFieldSelect) {
+        columnFieldSelect.addEventListener("change", updateColumnFilterValueOptions);
+    }
+
+    if (addColumnFilterBtn) {
+        addColumnFilterBtn.addEventListener("click", addActiveColumnFilter);
+    }
+
+    if (activeColumnFiltersEl) {
+        activeColumnFiltersEl.addEventListener("click", (event) => {
+            const removeBtn = event.target.closest("button[data-index]");
+            if (!removeBtn) return;
+            const index = Number(removeBtn.dataset.index);
+            if (!Number.isInteger(index)) return;
+            activeColumnFilters.splice(index, 1);
+            renderActiveColumnFilters();
+            pagination.currentPage = 1;
+            applyFilters();
+        });
+    }
 
     if (clearBtn) {
         clearBtn.addEventListener("click", () => {
@@ -1138,11 +1344,16 @@ function setupFilterListeners() {
             // Clear tab-specific searches
             document.querySelectorAll(".table-actions input[type='text'], .filter-bar input[type='text']").forEach(inp => inp.value = "");
             
-            // Reset quick filter pill
-            pillBtns.forEach(b => b.classList.remove("active"));
-            const allBtn = document.querySelector(".pill-btn[data-filter='all']");
-            if (allBtn) allBtn.classList.add("active");
-            currentQuickFilter = 'all';
+            // Reset quick filter pills
+            setQuickFilters([]);
+            clearActiveColumnFilters();
+            const columnFieldSelect = document.getElementById("column-filter-field");
+            const columnValueSelect = document.getElementById("column-filter-value");
+            if (columnFieldSelect) columnFieldSelect.value = "";
+            if (columnValueSelect) {
+                setSelectOptions(columnValueSelect, [], "Select value");
+                columnValueSelect.disabled = true;
+            }
 
             pagination.currentPage = 1;
             applyFilters();
@@ -1214,23 +1425,11 @@ function applyFilters() {
         const matchesCoordinator = !coordinatorVal || coordinator === coordinatorVal;
         const matchesStatus = !statusVal || status === statusVal;
         
-        // Quick filter check
-        let matchesQuickFilter = true;
-        if (currentQuickFilter === 'barriers') {
-            matchesQuickFilter = hasActiveBarrier(pat);
-        } else if (currentQuickFilter === 'pending-referrals') {
-            matchesQuickFilter = isPendingValue(getPatientVal(pat, 'treatmentReferralStatus'));
-        } else if (currentQuickFilter === 'ncm-cases') {
-            matchesQuickFilter = isYesValue(getPatientVal(pat, 'ncm'));
-        } else if (currentQuickFilter === 'permit-stage') {
-            matchesQuickFilter = isYesValue(getPatientVal(pat, 'permitSent'));
-        } else if (currentQuickFilter === 'chemo-missing') {
-            matchesQuickFilter = !isValidDateValue(getPatientVal(pat, 'chemoDate'));
-        } else if (currentQuickFilter === 'chemo-scheduled') {
-            matchesQuickFilter = isValidDateValue(getPatientVal(pat, 'chemoDate'));
-        }
+        // Quick filters combine with AND logic when more than one pill is selected.
+        const matchesQuickFilter = matchesSelectedQuickFilters(pat);
+        const matchesColumnFilters = matchesActiveColumnFilters(pat);
         
-        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesQuickFilter;
+        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesQuickFilter && matchesColumnFilters;
     });
 
     // Apply Sorting
