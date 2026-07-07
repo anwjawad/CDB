@@ -8,7 +8,7 @@ Unlike the local Flask version, this version runs **entirely in the user's web b
 - **Client-Side Parsing:** Uses [SheetJS](https://sheetjs.com/) to read and extract patient tracking tables from the downloaded `.xlsx` workbook.
 - **Automatic Refresh:** Refreshes from OneDrive every 5 minutes while the page is open, and also when the browser tab becomes active again.
 - **Manual Fallback:** If direct OneDrive browser access is blocked by sharing permissions or CORS, the user can still upload a local `.xlsx` copy.
-- **Local Browser Caching:** Saves the parsed patient data, clinic nurse lists, and metadata directly in the current browser profile using HTML5 `LocalStorage`.
+- **Session-Scoped Caching:** Parsed patient data, clinic nurse lists, and metadata are cached in HTML5 `SessionStorage` so they are automatically discarded when the browser tab/window is closed. Cached patient data is also purged after 20 minutes of inactivity. Only non-sensitive UI preferences (e.g. theme) are kept in `LocalStorage`.
 
 ## Current Structure
 - `index.html` contains the static application shell, tabs, tables, modals, and drawer markup.
@@ -19,7 +19,8 @@ Unlike the local Flask version, this version runs **entirely in the user's web b
 - The browser must be able to load Chart.js and SheetJS from their CDN URLs.
 - The OneDrive sharing link must allow anonymous download access for a static browser app to sync it directly.
 - Clearing browser storage removes the cached tracker data; the dashboard will try to repopulate from OneDrive on the next load.
-- Keep this dashboard hosted and opened only in trusted environments, because uploaded patient records remain available to anyone with access to the same browser profile until the cache is cleared.
+- Third-party libraries (Chart.js, SheetJS, FontAwesome) are loaded from pinned CDN versions with Subresource Integrity (SRI) hashes, so the browser refuses to run them if the fetched file has been tampered with.
+- Cached patient records are held in `SessionStorage` and are cleared automatically when the tab is closed or after 20 minutes of inactivity; they do not persist across browser sessions. Even so, keep this dashboard hosted and opened only in trusted environments, and close the tab when leaving a shared workstation.
 
 ## How to Deploy on GitHub Pages
 1. Push this directory or the whole project to a GitHub repository.

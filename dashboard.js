@@ -16,6 +16,21 @@ const STORAGE_KEYS = Object.freeze({
     data: "dashboard_static_data"
 });
 
+// --- F-01 hardening: patient health information (PHI) must never persist
+// indefinitely in localStorage, where any later user of the same browser
+// profile (or any script on the page) could read it. Sensitive keys are routed
+// to sessionStorage so their data is automatically discarded when the browser
+// tab/window is closed. Non-sensitive UI preferences (e.g. theme) stay in
+// localStorage so they still persist across sessions.
+const SENSITIVE_KEYS = Object.freeze(new Set([STORAGE_KEYS.data]));
+
+// Idle auto-purge: wipe cached PHI after this many milliseconds of inactivity.
+const PHI_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
+
+function getStore(key) {
+    return SENSITIVE_KEYS.has(key) ? window.sessionStorage : window.localStorage;
+}
+
 const VALUE_ALIASES = Object.freeze({
     yes: ["yes", "y", "true", "1", "نعم"],
     no: ["no", "n", "false", "0", "0.0", "none", "لا"],
@@ -67,19 +82,19 @@ function getEscapedPatientVal(pat, type, fallback = "") {
 
 function readStorage(key, fallback = null) {
     try {
-        return localStorage.getItem(key) ?? fallback;
+        return getStore(key).getItem(key) ?? fallback;
     } catch (err) {
-        console.warn(`Unable to read local storage key "${key}"`, err);
+        console.warn(`Unable to read storage key "${key}"`, err);
         return fallback;
     }
 }
 
 function writeStorage(key, value) {
     try {
-        localStorage.setItem(key, value);
+        getStore(key).setItem(key, value);
         return true;
     } catch (err) {
-        console.error(`Unable to write local storage key "${key}"`, err);
+        console.error(`Unable to write storage key "${key}"`, err);
         showToast("Browser storage is unavailable or full. Data was not cached.", "error");
         return false;
     }
@@ -87,10 +102,10 @@ function writeStorage(key, value) {
 
 function removeStorage(key) {
     try {
-        localStorage.removeItem(key);
+        getStore(key).removeItem(key);
         return true;
     } catch (err) {
-        console.warn(`Unable to remove local storage key "${key}"`, err);
+        console.warn(`Unable to remove storage key "${key}"`, err);
         return false;
     }
 }
@@ -701,6 +716,7 @@ function initApp() {
     setupSidebarToggle();
 
     setupResetCache();
+    setupIdlePurge();
     if (dependenciesReady) {
         loadDashboardData({ silent: true });
     } else {
@@ -824,6 +840,29 @@ function setupTabSwitching() {
             }
         });
     });
+}
+
+// --- F-01 hardening: clear cached PHI after a period of user inactivity ---
+function setupIdlePurge() {
+    let idleTimer = null;
+
+    const purge = () => {
+        // Only act if PHI is actually cached in this session.
+        if (readStorage(STORAGE_KEYS.data) === null) return;
+        removeStorage(STORAGE_KEYS.data);
+        showToast("Session idle — cached patient data cleared for privacy. Please re-upload your file.", "info");
+        setTimeout(() => { window.location.reload(); }, 1500);
+    };
+
+    const resetTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(purge, PHI_IDLE_TIMEOUT_MS);
+    };
+
+    ["mousemove", "keydown", "click", "scroll", "touchstart"].forEach(evt => {
+        window.addEventListener(evt, resetTimer, { passive: true });
+    });
+    resetTimer();
 }
 
 function setupResetCache() {
