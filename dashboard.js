@@ -3141,19 +3141,26 @@ function executePrintJob() {
             <span>Generated from Patient Care Coordination System</span>
             <span>Confidential Medical Information</span>
         </div>
-        <script>
-            window.onload = function() {
-                window.print();
-                setTimeout(function() { window.close(); }, 500);
-            };
-        <\/script>
     </body>
     </html>
     `;
-    
+
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
+
+    // Drive printing from the opener instead of an inline <script> in the popup.
+    // An about:blank popup inherits this page's Content-Security-Policy, so an
+    // inline script would be blocked once inline scripts are forbidden (F-03).
+    setTimeout(function() {
+        try {
+            printWindow.focus();
+            printWindow.print();
+        } catch (err) {
+            console.warn("Print failed", err);
+        }
+        setTimeout(function() { printWindow.close(); }, 500);
+    }, 300);
 }
 
 // --- Workflow Guideline / Next Action Hints ---
