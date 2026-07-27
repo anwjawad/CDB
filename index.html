@@ -618,6 +618,8 @@
                             <div class="ncm-filter-chips" id="ncm-filter-chips" role="group" aria-label="NCM filters"></div>
                             <div class="ncm-toolbar-actions">
                                 <span class="ncm-current-user-chip" id="ncm-current-user-chip"></span>
+                                <button class="btn btn-secondary btn-sm" id="ncm-print-today-btn" title="Print today's NCM discussion list"><i class="fa-solid fa-print"></i> Print Today's List</button>
+                                <button class="btn btn-secondary btn-sm" id="ncm-export-word-btn" title="Export today's NCM discussion list to Word"><i class="fa-solid fa-file-word"></i> Export to Word</button>
                                 <button class="btn btn-primary btn-sm" id="ncm-add-patient-btn"><i class="fa-solid fa-plus"></i> Add Patient</button>
                             </div>
                         </div>
@@ -1469,7 +1471,11 @@
                 </div>
                 <div class="form-group">
                     <label for="ncm-add-physician">Primary Physician</label>
-                    <input type="text" id="ncm-add-physician">
+                    <select id="ncm-add-physician">
+                        <option value="">Select physician...</option>
+                        <option value="__other__">Other (type manually)</option>
+                    </select>
+                    <input type="text" id="ncm-add-physician-other" class="margin-top-15" placeholder="Enter physician name" style="display:none;">
                 </div>
                 <div class="form-group">
                     <label for="ncm-add-history">Brief History</label>

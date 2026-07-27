@@ -352,6 +352,12 @@
     margin-top: 2px;
 }
 
+.ncm-delete-btn:hover {
+    background: var(--color-danger-bg);
+    border-color: var(--color-danger);
+    color: var(--color-danger);
+}
+
 .ncm-conflict-actions {
     display: flex;
     gap: 10px;

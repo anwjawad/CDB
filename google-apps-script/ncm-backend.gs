@@ -77,6 +77,7 @@ function handleRequest_(e, method) {
       case "import": return jsonResponse_(withLock_(function () { return actionImport_(params); }));
       case "createManual": return jsonResponse_(withLock_(function () { return actionCreateManual_(params); }));
       case "link": return jsonResponse_(withLock_(function () { return actionLink_(params); }));
+      case "delete": return jsonResponse_(withLock_(function () { return actionDelete_(params); }));
       case "updateShared": return jsonResponse_(withLock_(function () { return actionUpdateFields_(params, SHARED_FIELDS, null); }));
       case "updateCoordinator": return jsonResponse_(withLock_(function () { return actionUpdateRole_(params, "coordinator", COORDINATOR_FIELDS); }));
       case "updateResident": return jsonResponse_(withLock_(function () { return actionUpdateRole_(params, "resident", RESIDENT_FIELDS); }));
@@ -368,6 +369,20 @@ function actionLink_(params) {
   var lastCol = sheet.getLastColumn();
   var rowValues = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];
   return { success: true, data: rowToObject_(sheet, colMap, rowValues) };
+}
+
+function actionDelete_(params) {
+  if (!params.patientKey) return { success: false, error: "patientKey is required." };
+  var sheet = getNcmSheet_();
+  var colMap = getColumnMap_(sheet);
+  var rowIndex = findRowIndexByPatientKey_(sheet, colMap, params.patientKey);
+  if (rowIndex === -1) {
+    // Idempotent: already gone counts as success (e.g. a retried outbox entry after a dropped response).
+    return { success: true, patientKey: params.patientKey, alreadyDeleted: true };
+  }
+  sheet.deleteRow(rowIndex);
+  appendAudit_(params.patientKey, params.user, params.role, "delete", []);
+  return { success: true, patientKey: params.patientKey };
 }
 
 function actionUpdateFields_(params, allowedFields, roleForAudit) {

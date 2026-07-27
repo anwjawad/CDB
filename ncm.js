@@ -327,6 +327,12 @@ async function ncmTriggerBackgroundSync() {
     await ncmProcessOutbox((entry, result) => {
         const patientKey = entry.payload && entry.payload.patientKey;
         if (!patientKey) return;
+        if (entry.action === "delete") {
+            // Already removed locally at delete time — never resurrect it here, even on success.
+            delete ncmState.syncStatus[patientKey];
+            ncmRefreshListsIfVisible();
+            return;
+        }
         if (result && result.success) {
             const record = ncmGetLocalPatient(patientKey) || {};
             Object.assign(record, result.data);
@@ -685,6 +691,7 @@ function ncmRenderWorkspacePanel() {
                 </div>
             </div>
             ${!record.masterLinked ? `<button class="btn btn-secondary btn-sm" id="ncm-link-btn"><i class="fa-solid fa-link"></i> Link to Master Registry</button>` : ""}
+            <button class="btn btn-secondary btn-sm ncm-delete-btn" id="ncm-delete-btn" title="Remove from NCM"><i class="fa-solid fa-trash-can"></i></button>
         </div>
 
         <div id="ncm-remote-notice-banner"></div>
@@ -912,9 +919,40 @@ function ncmWireWorkspaceHeaderButtons(record) {
     const prevBtn = document.getElementById("ncm-prev-btn");
     const nextBtn = document.getElementById("ncm-next-btn");
     const linkBtn = document.getElementById("ncm-link-btn");
+    const deleteBtn = document.getElementById("ncm-delete-btn");
     if (prevBtn) prevBtn.addEventListener("click", () => ncmNavigate(-1));
     if (nextBtn) nextBtn.addEventListener("click", () => ncmNavigate(1));
     if (linkBtn) linkBtn.addEventListener("click", () => ncmOpenLinkPicker(record));
+    if (deleteBtn) deleteBtn.addEventListener("click", () => {
+        if (window.confirm(`Remove ${record.patientName || "this patient"} from the NCM list? This cannot be undone.`)) {
+            ncmDeletePatient(record.patientKey);
+        }
+    });
+}
+
+function ncmDeletePatient(patientKey) {
+    const store = ncmReadLocalStore();
+    if (!store[patientKey]) return;
+    delete store[patientKey];
+    ncmWriteLocalStore(store);
+
+    const remainingOutbox = ncmReadOutbox().filter(e => !(e.payload && e.payload.patientKey === patientKey));
+    ncmWriteOutbox(remainingOutbox);
+
+    delete ncmState.draft[patientKey];
+    delete ncmState.syncStatus[patientKey];
+    if (ncmState.selectedPatientKey === patientKey) {
+        ncmState.selectedPatientKey = null;
+        ncmRenderEmptyWorkspace();
+    }
+
+    const user = ncmGetCurrentUser();
+    ncmQueueMutation("delete", { patientKey, user: user ? user.name : "", role: user ? user.role : "" });
+    ncmTriggerBackgroundSync();
+
+    ncmRenderList("coordinator");
+    ncmRenderList("resident");
+    showToast("Patient removed from NCM.", "success");
 }
 
 function ncmNavigate(direction) {
@@ -943,13 +981,44 @@ async function ncmHandleSave(patientKey, role) {
 
 // --- Add Patient modal ---------------------------------------------------------
 
+/** Populates the Add Patient modal's physician <select> from distinct physician names in the imported Excel data. */
+function ncmPopulatePhysicianDropdown() {
+    const select = document.getElementById("ncm-add-physician");
+    if (!select) return;
+    const names = new Set();
+    (typeof patientsData !== "undefined" ? patientsData : []).forEach(pat => {
+        const name = getPatientVal(pat, "physician");
+        if (!isEmptyLike(name)) names.add(name);
+    });
+    const sorted = [...names].sort((a, b) => a.localeCompare(b));
+
+    select.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Select physician...";
+    select.appendChild(placeholder);
+    sorted.forEach(name => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+    });
+    const otherOpt = document.createElement("option");
+    otherOpt.value = "__other__";
+    otherOpt.textContent = "Other (type manually)";
+    select.appendChild(otherOpt);
+}
+
 function ncmOpenAddPatientModal() {
     const modal = document.getElementById("ncm-add-patient-modal");
     if (!modal) return;
-    ["ncm-add-name", "ncm-add-file", "ncm-add-id", "ncm-add-physician", "ncm-add-history", "ncm-add-plan", "ncm-add-notes"].forEach(id => {
+    ["ncm-add-name", "ncm-add-file", "ncm-add-id", "ncm-add-history", "ncm-add-plan", "ncm-add-notes"].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = "";
     });
+    ncmPopulatePhysicianDropdown();
+    const otherInput = document.getElementById("ncm-add-physician-other");
+    if (otherInput) { otherInput.value = ""; otherInput.style.display = "none"; }
     modal.classList.remove("hidden");
     document.getElementById("ncm-add-name").focus();
 }
@@ -960,11 +1029,15 @@ function ncmCloseAddPatientModal() {
 }
 
 function ncmSubmitAddPatientForm() {
+    const physicianSelect = document.getElementById("ncm-add-physician").value;
+    const physicianOther = document.getElementById("ncm-add-physician-other").value.trim();
+    const primaryPhysician = physicianSelect === "__other__" ? physicianOther : physicianSelect;
+
     const fields = {
         patientName: document.getElementById("ncm-add-name").value,
         patientFile: document.getElementById("ncm-add-file").value,
         patientId: document.getElementById("ncm-add-id").value,
-        primaryPhysician: document.getElementById("ncm-add-physician").value,
+        primaryPhysician,
         briefHistory: document.getElementById("ncm-add-history").value,
         treatmentPlan: document.getElementById("ncm-add-plan").value,
         notes: document.getElementById("ncm-add-notes").value
@@ -1047,6 +1120,154 @@ function ncmGoToNcmTabAndOpen(patientKey, role) {
     ncmSelectPatient(patientKey, role || "coordinator");
 }
 
+// --- Print / Word export: today's NCM discussion list ---------------------------------------------------------
+
+/** "Today" = the local date the patient was ADDED to NCM (createdAt), NOT the clinic visit date. */
+function ncmGetTodaysPatients() {
+    const todayKey = getTodayDateKey();
+    return ncmGetAllLocalPatients()
+        .filter(r => r.createdAt && r.createdAt.slice(0, 10) === todayKey)
+        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+}
+
+const NCM_DOC_STYLE = `
+    @page { size: portrait; margin: 15mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2937; background: #ffffff; margin: 0; padding: 0; font-size: 10.5pt; line-height: 1.5; }
+    .ncm-doc-header { border-bottom: 2px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 18px; }
+    .ncm-doc-header h1 { font-size: 18pt; color: #1e3a8a; margin: 0 0 4px 0; }
+    .ncm-doc-header p { margin: 0; font-size: 10pt; color: #555555; }
+    .ncm-doc-patient { border: 1px solid #cccccc; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px; page-break-inside: avoid; }
+    .ncm-doc-identity { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    .ncm-doc-num { width: 26px; height: 26px; background: #1e3a8a; color: #ffffff; border-radius: 50%; text-align: center; vertical-align: middle; font-weight: 700; font-size: 10pt; }
+    .ncm-doc-name { font-size: 13pt; font-weight: 700; color: #111827; }
+    .ncm-doc-badge { display: inline-block; font-size: 8pt; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+    .ncm-doc-meta { font-size: 9.5pt; color: #555555; margin-top: 2px; }
+    .ncm-doc-compare { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    .ncm-doc-compare th { background: #f3f4f6; color: #1f2937; font-size: 9.5pt; padding: 5px 8px; border: 1px solid #dddddd; text-align: left; width: 50%; }
+    .ncm-doc-compare td { border: 1px solid #dddddd; padding: 6px 8px; font-size: 9.5pt; vertical-align: top; width: 50%; }
+    .ncm-doc-shared { width: 100%; border-collapse: collapse; margin-top: 8px; background: #f9fafb; }
+    .ncm-doc-shared td { padding: 5px 8px; font-size: 9.5pt; border-top: 1px dashed #dddddd; }
+    .ncm-doc-footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #dddddd; font-size: 8pt; color: #777777; display: flex; justify-content: space-between; }
+`;
+
+function ncmBuildTodaysListContentHtml_(patients) {
+    const todayDisplay = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    let body = "";
+    patients.forEach((r, idx) => {
+        const hasShared = r.sharedTreatmentPlan || r.sharedNotes || r.caseStatus || r.barrier;
+        body += `
+        <div class="ncm-doc-patient">
+            <table class="ncm-doc-identity">
+                <tr>
+                    <td class="ncm-doc-num">${idx + 1}</td>
+                    <td>
+                        <div class="ncm-doc-name">${escapeHTML(r.patientName || "Unnamed")}${!r.masterLinked ? ' <span class="ncm-doc-badge">NCM Only</span>' : ""}</div>
+                        <div class="ncm-doc-meta">File ${escapeHTML(r.patientFile || "-")} &bull; ID ${escapeHTML(r.patientId || "-")}${r.diagnosis ? " &bull; " + escapeHTML(r.diagnosis) : ""}${r.primaryPhysician ? " &bull; " + escapeHTML(r.primaryPhysician) : ""}</div>
+                    </td>
+                </tr>
+            </table>
+            <table class="ncm-doc-compare">
+                <thead><tr><th>Coordinator</th><th>Resident</th></tr></thead>
+                <tbody>
+                    <tr><td>Status: ${escapeHTML(r.coordinatorStatus || "Not Started")}</td><td>Status: ${escapeHTML(r.residentStatus || "Not Started")}</td></tr>
+                    <tr><td>${escapeHTML(r.coordinatorBriefHistory || "-")}</td><td>${escapeHTML(r.residentBriefHistory || "-")}</td></tr>
+                    <tr><td><strong>Treatment Plan:</strong> ${escapeHTML(r.coordinatorTreatmentPlan || "-")}</td><td><strong>Assessment:</strong> ${escapeHTML(r.residentAssessment || "-")}</td></tr>
+                    <tr><td><strong>Notes:</strong> ${escapeHTML(r.coordinatorNotes || "-")}</td><td><strong>Notes:</strong> ${escapeHTML(r.residentNotes || "-")}</td></tr>
+                    <tr><td><strong>Decision:</strong> ${escapeHTML(r.coordinatorDecision || "-")}</td><td><strong>Decision:</strong> ${escapeHTML(r.residentDecision || "-")}</td></tr>
+                </tbody>
+            </table>
+            ${hasShared ? `
+            <table class="ncm-doc-shared">
+                <tr><td><strong>Shared Treatment Plan:</strong> ${escapeHTML(r.sharedTreatmentPlan || "-")}</td></tr>
+                <tr><td><strong>Shared Notes:</strong> ${escapeHTML(r.sharedNotes || "-")}</td></tr>
+                <tr><td><strong>Case Status:</strong> ${escapeHTML(r.caseStatus || "-")}${r.barrier ? "&nbsp;&nbsp;&nbsp;<strong>Barrier:</strong> " + escapeHTML(r.barrier) : ""}</td></tr>
+            </table>` : ""}
+        </div>`;
+    });
+
+    return `
+        <div class="ncm-doc-header">
+            <h1>New Cases Meeting &mdash; Today's Discussion List</h1>
+            <p>${todayDisplay} &bull; ${patients.length} patient${patients.length !== 1 ? "s" : ""} discussed</p>
+        </div>
+        ${body}`;
+}
+
+function ncmPrintTodaysList() {
+    const patients = ncmGetTodaysPatients();
+    if (patients.length === 0) {
+        showToast("No patients discussed today yet.", "info");
+        return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+        showToast("Error: Popup blocked! Please allow popups for this site.", "error");
+        return;
+    }
+    const content = ncmBuildTodaysListContentHtml_(patients);
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>NCM Today's List</title>
+        <style>${NCM_DOC_STYLE}</style>
+    </head>
+    <body>
+        ${content}
+        <div class="ncm-doc-footer">
+            <span>OncoCoord &mdash; NCM Collaborative Workspace</span>
+            <span>Printed ${new Date().toLocaleString()}</span>
+        </div>
+        <script>
+            window.onload = function() {
+                window.print();
+                setTimeout(function() { window.close(); }, 500);
+            };
+        <\/script>
+    </body>
+    </html>`;
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+}
+
+function ncmExportTodaysListToWord() {
+    const patients = ncmGetTodaysPatients();
+    if (patients.length === 0) {
+        showToast("No patients discussed today yet.", "info");
+        return;
+    }
+    const content = ncmBuildTodaysListContentHtml_(patients);
+    const html = `<!DOCTYPE html>
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+        <meta charset="UTF-8">
+        <title>NCM Today's List</title>
+        <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+        <style>${NCM_DOC_STYLE}</style>
+    </head>
+    <body>
+        ${content}
+        <div class="ncm-doc-footer">
+            <span>OncoCoord &mdash; NCM Collaborative Workspace</span>
+            <span>Exported ${new Date().toLocaleString()}</span>
+        </div>
+    </body>
+    </html>`;
+
+    const blob = new Blob(["﻿", html], { type: "application/msword" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `NCM_Today_${getTodayDateKey()}.doc`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(`Exported ${patients.length} patient${patients.length !== 1 ? "s" : ""} to Word.`, "success");
+}
+
 // --- Setup (called once from initApp) ---------------------------------------------------------
 
 function setupNcmWorkspace() {
@@ -1076,10 +1297,27 @@ function setupNcmWorkspace() {
         });
     }
 
+    const printTodayBtn = document.getElementById("ncm-print-today-btn");
+    if (printTodayBtn) printTodayBtn.addEventListener("click", ncmPrintTodaysList);
+    const exportWordBtn = document.getElementById("ncm-export-word-btn");
+    if (exportWordBtn) exportWordBtn.addEventListener("click", ncmExportTodaysListToWord);
+
     const addBtn = document.getElementById("ncm-add-patient-btn");
     if (addBtn) addBtn.addEventListener("click", ncmOpenAddPatientModal);
+    const physicianSelect = document.getElementById("ncm-add-physician");
+    if (physicianSelect) {
+        physicianSelect.addEventListener("change", () => {
+            const otherInput = document.getElementById("ncm-add-physician-other");
+            if (otherInput) {
+                otherInput.style.display = physicianSelect.value === "__other__" ? "" : "none";
+                if (physicianSelect.value === "__other__") otherInput.focus();
+            }
+        });
+    }
     const addCancelBtn = document.getElementById("ncm-add-cancel-btn");
     if (addCancelBtn) addCancelBtn.addEventListener("click", ncmCloseAddPatientModal);
+    const addCloseBtn = document.getElementById("ncm-add-close-btn");
+    if (addCloseBtn) addCloseBtn.addEventListener("click", ncmCloseAddPatientModal);
     const addSubmitBtn = document.getElementById("ncm-add-submit-btn");
     if (addSubmitBtn) addSubmitBtn.addEventListener("click", ncmSubmitAddPatientForm);
 
@@ -1087,6 +1325,8 @@ function setupNcmWorkspace() {
     if (linkSearchInput) linkSearchInput.addEventListener("input", () => ncmRenderLinkResults(linkSearchInput.value));
     const linkCancelBtn = document.getElementById("ncm-link-cancel-btn");
     if (linkCancelBtn) linkCancelBtn.addEventListener("click", ncmCloseLinkModal);
+    const linkCloseBtn = document.getElementById("ncm-link-close-btn");
+    if (linkCloseBtn) linkCloseBtn.addEventListener("click", ncmCloseLinkModal);
 
     ncmStartPolling(ncmMergeRemoteChanges);
 }

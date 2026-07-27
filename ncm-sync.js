@@ -110,6 +110,7 @@ function ncmApiChanges(since) { return ncmGet("changes", { since }); }
 function ncmApiImport(patient, user, role) { return ncmPost("import", { patient, user, role }); }
 function ncmApiCreateManual(patientKey, patient, user, role) { return ncmPost("createManual", { patientKey, patient, user, role }); }
 function ncmApiLink(patientKey, patient, user, role) { return ncmPost("link", { patientKey, patient, user, role }); }
+function ncmApiDelete(patientKey, user, role) { return ncmPost("delete", { patientKey, user, role }); }
 function ncmApiUpdateShared(patientKey, fields, user, role) { return ncmPost("updateShared", { patientKey, fields, user, role }); }
 function ncmApiUpdateCoordinator(patientKey, fields, expectedVersion, user) {
     return ncmPost("updateCoordinator", { patientKey, fields, expectedVersion, user, role: "coordinator" });
@@ -161,6 +162,7 @@ function ncmDispatchMutation_(entry) {
         case "import": return ncmApiImport(p.patient, p.user, p.role);
         case "createManual": return ncmApiCreateManual(p.patientKey, p.patient, p.user, p.role);
         case "link": return ncmApiLink(p.patientKey, p.patient, p.user, p.role);
+        case "delete": return ncmApiDelete(p.patientKey, p.user, p.role);
         case "updateShared": return ncmApiUpdateShared(p.patientKey, p.fields, p.user, p.role);
         case "updateCoordinator": return ncmApiUpdateCoordinator(p.patientKey, p.fields, p.expectedVersion, p.user);
         case "updateResident": return ncmApiUpdateResident(p.patientKey, p.fields, p.expectedVersion, p.user);
