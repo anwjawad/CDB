@@ -791,6 +791,8 @@ function ncmRenderRolePanel(record) {
         });
     });
 
+    panel.className = "ncm-role-panel role-" + ncmState.activeWorkspaceTab;
+
     if (ncmState.activeWorkspaceTab === "compare") {
         panel.innerHTML = ncmBuildCompareHtml_(record);
         return;
@@ -799,6 +801,7 @@ function ncmRenderRolePanel(record) {
     const role = ncmState.activeWorkspaceTab;
     const defs = role === "coordinator" ? NCM_COORDINATOR_FIELD_DEFS : NCM_RESIDENT_FIELD_DEFS;
     panel.innerHTML = `
+        <div class="ncm-role-panel-heading"><i class="fa-solid ${role === "coordinator" ? "fa-user-nurse" : "fa-user-doctor"}"></i> ${role === "coordinator" ? "Coordinator Workspace" : "Resident Workspace"}</div>
         <div class="ncm-field-grid">
             ${defs.map(def => `
                 <div class="ncm-field">
@@ -835,11 +838,11 @@ function ncmBuildCompareHtml_(record) {
     ];
     return `
         <div class="ncm-compare-grid">
-            <div class="ncm-compare-col-header">Coordinator</div>
-            <div class="ncm-compare-col-header">Resident</div>
+            <div class="ncm-compare-col-header role-coordinator"><i class="fa-solid fa-user-nurse"></i> Coordinator</div>
+            <div class="ncm-compare-col-header role-resident"><i class="fa-solid fa-user-doctor"></i> Resident</div>
             ${rows.map(([label, left, right]) => `
-                <div class="ncm-compare-cell"><span class="ncm-compare-label">${label}</span><p class="${left !== right ? "ncm-compare-diff" : ""}">${escapeHTML(left || "&mdash;")}</p></div>
-                <div class="ncm-compare-cell"><span class="ncm-compare-label">${label}</span><p class="${left !== right ? "ncm-compare-diff" : ""}">${escapeHTML(right || "&mdash;")}</p></div>
+                <div class="ncm-compare-cell role-coordinator"><span class="ncm-compare-label">${label}</span><p class="${left !== right ? "ncm-compare-diff" : ""}">${escapeHTML(left || "&mdash;")}</p></div>
+                <div class="ncm-compare-cell role-resident"><span class="ncm-compare-label">${label}</span><p class="${left !== right ? "ncm-compare-diff" : ""}">${escapeHTML(right || "&mdash;")}</p></div>
             `).join("")}
         </div>
     `;

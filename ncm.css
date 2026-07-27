@@ -550,9 +550,43 @@
     border-bottom-color: var(--color-primary);
 }
 
+.ncm-role-tab[data-tab="resident"].active {
+    color: var(--color-resident);
+    border-bottom-color: var(--color-resident);
+}
+
 .ncm-role-panel {
     margin-bottom: 22px;
+    border-radius: 8px;
+    padding: 16px;
+    transition: var(--transition-fast);
 }
+
+.ncm-role-panel.role-coordinator {
+    background: var(--color-primary-glow);
+}
+
+.ncm-role-panel.role-resident {
+    background: var(--color-resident-bg);
+}
+
+.ncm-role-panel-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    margin-bottom: 12px;
+}
+
+.ncm-role-panel-heading i {
+    font-size: 11px;
+}
+
+.role-coordinator .ncm-role-panel-heading { color: var(--color-primary); }
+.role-resident .ncm-role-panel-heading { color: var(--color-resident); }
 
 .ncm-role-panel-footer {
     display: flex;
@@ -587,10 +621,16 @@
     text-align: center;
 }
 
+.ncm-compare-col-header.role-coordinator { color: var(--color-primary); background: var(--color-primary-glow); }
+.ncm-compare-col-header.role-resident { color: var(--color-resident); background: var(--color-resident-bg); }
+
 .ncm-compare-cell {
     background: var(--surface-control);
     padding: 12px 14px;
 }
+
+.ncm-compare-cell.role-coordinator { background: color-mix(in srgb, var(--color-primary-glow) 45%, var(--surface-control)); }
+.ncm-compare-cell.role-resident { background: color-mix(in srgb, var(--color-resident-bg) 45%, var(--surface-control)); }
 
 .ncm-compare-label {
     display: block;

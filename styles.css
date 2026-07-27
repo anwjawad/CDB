@@ -28,6 +28,10 @@
     --color-info: #38bdf8;
     --color-info-bg: rgba(56, 189, 248, 0.08);
 
+    /* NCM role identity — keeps Coordinator vs Resident visually distinct at a glance */
+    --color-resident: #a855f7;
+    --color-resident-bg: rgba(168, 85, 247, 0.13);
+
     /* Surfaces */
     --surface-raised: rgba(14, 24, 50, 0.82);
     --surface-control: rgba(4, 10, 26, 0.55);
@@ -62,6 +66,8 @@
     --color-success-bg: rgba(16, 185, 129, 0.12);
     --color-warning-bg: rgba(245, 158, 11, 0.12);
     --color-danger-bg: rgba(239, 68, 68, 0.12);
+    --color-resident: #9333ea;
+    --color-resident-bg: rgba(147, 51, 234, 0.12);
     --surface-raised: #ffffff;
     --surface-control: rgba(237, 244, 252, 0.97);
     --focus-ring: 0 0 0 3px rgba(2, 132, 199, 0.25);
