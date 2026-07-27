@@ -163,7 +163,9 @@ function ncmBuildSnapshotFromMasterPatient(pat) {
         barrier: getPatientVal(pat, "barrier"),
         caseStatus: getPatientVal(pat, "status"),
         sharedTreatmentPlan: getPatientVal(pat, "treatmentPlan"),
-        sharedNotes: getPatientVal(pat, "notes")
+        sharedNotes: getPatientVal(pat, "notes"),
+        coordinatorBriefHistory: getPatientVal(pat, "diagnosis"),
+        residentBriefHistory: getPatientVal(pat, "diagnosis")
     };
 }
 
