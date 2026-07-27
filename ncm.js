@@ -21,8 +21,6 @@ const NCM_STORAGE_KEYS = Object.freeze({
     currentUser: "ncm_current_user" // { name, role }
 });
 
-const NCM_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready", "Reviewed", "Completed"];
-
 let ncmState = {
     selectedPatientKey: null,
     selectedListRole: "coordinator", // which list was clicked last, for context when opening the workspace
@@ -503,10 +501,6 @@ function ncmBuildAutoSummary(record) {
 
 function ncmMatchesFilter(record, filter, listRole) {
     if (filter === "all") return true;
-    if (filter === "not-started") return record[`${listRole}Status`] === "Not Started";
-    if (filter === "in-progress") return record[`${listRole}Status`] === "In Progress";
-    if (filter === "ready") return record[`${listRole}Status`] === "Ready";
-    if (filter === "reviewed") return record[`${listRole}Status`] === "Reviewed";
     if (filter === "ncm-only") return record.source === "manual";
     if (filter === "not-in-master") return !record.masterLinked;
     if (filter === "has-barrier") return !isEmptyLike(record.barrier) && !isNoValue(record.barrier);
@@ -535,10 +529,6 @@ function ncmGetFilteredPatients(listRole) {
 
 const NCM_FILTER_OPTIONS = [
     { key: "all", label: "All" },
-    { key: "not-started", label: "Not Started" },
-    { key: "in-progress", label: "In Progress" },
-    { key: "ready", label: "Ready" },
-    { key: "reviewed", label: "Reviewed" },
     { key: "ncm-only", label: "NCM Only" },
     { key: "not-in-master", label: "Not in Master Registry" },
     { key: "has-barrier", label: "Has Barrier" },
@@ -547,7 +537,6 @@ const NCM_FILTER_OPTIONS = [
     { key: "chemo-not-scheduled", label: "Chemo Not Scheduled" }
 ];
 
-const NCM_STATUS_ICON = { "Not Started": "fa-circle", "In Progress": "fa-spinner", "Ready": "fa-circle-check", "Reviewed": "fa-eye", "Completed": "fa-flag-checkered" };
 
 function renderNcmTab() {
     ncmRenderToolbar();
@@ -598,9 +587,6 @@ function ncmRenderList(role) {
     patients.forEach(record => {
         const item = document.createElement("div");
         item.className = "ncm-list-item" + (ncmState.selectedPatientKey === record.patientKey ? " selected" : "");
-        const status = record[`${role}Status`] || "Not Started";
-        const otherRole = role === "coordinator" ? "resident" : "coordinator";
-        const otherStatus = record[`${otherRole}Status`] || "Not Started";
         const syncStatus = ncmGetSyncStatus(record.patientKey);
         item.innerHTML = `
             <div class="ncm-list-item-main">
@@ -610,10 +596,6 @@ function ncmRenderList(role) {
                 ${syncStatus === "conflict" ? '<span class="ncm-sync-dot ncm-sync-conflict" title="Conflict"></span>' : ''}
             </div>
             <div class="ncm-list-item-meta">${escapeHTML(record.patientFile || "-")} • ${escapeHTML(record.patientId || "-")}</div>
-            <div class="ncm-list-item-status">
-                <span class="ncm-status-chip ncm-status-${status.replace(/\s+/g, '-').toLowerCase()}"><i class="fa-solid ${NCM_STATUS_ICON[status] || 'fa-circle'}"></i> ${status}</span>
-                <span class="ncm-status-chip-other">${otherRole === 'coordinator' ? 'Coord' : 'Res'}: ${otherStatus}</span>
-            </div>
         `;
         item.addEventListener("click", () => ncmSelectPatient(record.patientKey, role));
         container.appendChild(item);
@@ -646,19 +628,12 @@ function ncmRenderEmptyWorkspace() {
 const NCM_COORDINATOR_FIELD_DEFS = [
     { key: "coordinatorBriefHistory", label: "Brief History", type: "textarea" },
     { key: "coordinatorTreatmentPlan", label: "Treatment Plan", type: "textarea" },
-    { key: "coordinatorNotes", label: "Coordinator Notes", type: "textarea" },
-    { key: "coordinatorMeetingNotes", label: "Meeting Notes", type: "textarea" },
-    { key: "coordinatorDecision", label: "Coordinator Status / Decision", type: "text" },
-    { key: "coordinatorStatus", label: "Progress Status", type: "select", options: NCM_STATUS_OPTIONS }
+    { key: "coordinatorNotes", label: "Coordinator Notes", type: "textarea" }
 ];
 const NCM_RESIDENT_FIELD_DEFS = [
     { key: "residentBriefHistory", label: "Brief History", type: "textarea" },
-    { key: "residentAssessment", label: "Medical Assessment", type: "textarea" },
     { key: "residentTreatmentPlan", label: "Treatment Plan", type: "textarea" },
-    { key: "residentNotes", label: "Resident Notes", type: "textarea" },
-    { key: "residentMeetingNotes", label: "Meeting Notes", type: "textarea" },
-    { key: "residentDecision", label: "Medical Decision / Recommendation", type: "text" },
-    { key: "residentStatus", label: "Progress Status", type: "select", options: NCM_STATUS_OPTIONS }
+    { key: "residentNotes", label: "Resident Notes", type: "textarea" }
 ];
 const NCM_SHARED_FIELD_DEFS = [
     { key: "sharedTreatmentPlan", label: "Shared Treatment Plan", type: "textarea" },
@@ -848,10 +823,7 @@ function ncmBuildCompareHtml_(record) {
     const rows = [
         ["Brief History", record.coordinatorBriefHistory, record.residentBriefHistory],
         ["Treatment Plan", record.coordinatorTreatmentPlan, record.residentTreatmentPlan],
-        ["Notes", record.coordinatorNotes, record.residentNotes],
-        ["Meeting Notes", record.coordinatorMeetingNotes, record.residentMeetingNotes],
-        ["Decision", record.coordinatorDecision, record.residentDecision],
-        ["Status", record.coordinatorStatus, record.residentStatus]
+        ["Notes", record.coordinatorNotes, record.residentNotes]
     ];
     return `
         <div class="ncm-compare-grid">
@@ -1048,18 +1020,9 @@ async function ncmHandleSave(patientKey, role) {
 
 // --- Resident Review tab (separate page — NCM-only data, no Excel/master fields) ---------------------------------------------------------
 
-const NCM_RESIDENT_FILTER_OPTIONS = [
-    { key: "all", label: "All" },
-    { key: "not-started", label: "Not Started" },
-    { key: "in-progress", label: "In Progress" },
-    { key: "ready", label: "Ready" },
-    { key: "reviewed", label: "Reviewed" }
-];
-
 function ncmGetResidentFilteredPatients() {
     return ncmGetAllLocalPatients()
         .filter(r => ncmMatchesSearch(r, ncmState.residentView.searchQuery))
-        .filter(r => ncmMatchesFilter(r, ncmState.residentView.activeFilter, "resident"))
         .sort((a, b) => (a.patientName || "").localeCompare(b.patientName || ""));
 }
 
@@ -1074,22 +1037,6 @@ function renderNcmResidentTab() {
 }
 
 function ncmRenderResidentToolbar() {
-    const chipsEl = document.getElementById("ncm-resident-filter-chips");
-    if (chipsEl && chipsEl.children.length === 0) {
-        NCM_RESIDENT_FILTER_OPTIONS.forEach(opt => {
-            const chip = document.createElement("button");
-            chip.type = "button";
-            chip.className = "ncm-filter-chip" + (opt.key === ncmState.residentView.activeFilter ? " active" : "");
-            chip.textContent = opt.label;
-            chip.dataset.filter = opt.key;
-            chip.addEventListener("click", () => {
-                ncmState.residentView.activeFilter = opt.key;
-                chipsEl.querySelectorAll(".ncm-filter-chip").forEach(c => c.classList.toggle("active", c.dataset.filter === opt.key));
-                ncmRenderResidentList();
-            });
-            chipsEl.appendChild(chip);
-        });
-    }
     const userChip = document.getElementById("ncm-resident-current-user-chip");
     const user = ncmGetCurrentUser();
     if (userChip) userChip.textContent = user ? `${user.name} (${user.role === "coordinator" ? "Coordinator" : "Resident"})` : "";
@@ -1112,7 +1059,6 @@ function ncmRenderResidentList() {
     patients.forEach(record => {
         const item = document.createElement("div");
         item.className = "ncm-list-item" + (ncmState.residentView.selectedPatientKey === record.patientKey ? " selected" : "");
-        const status = record.residentStatus || "Not Started";
         const syncStatus = ncmGetSyncStatus(record.patientKey);
         item.innerHTML = `
             <div class="ncm-list-item-main">
@@ -1121,9 +1067,6 @@ function ncmRenderResidentList() {
                 ${syncStatus === "conflict" ? '<span class="ncm-sync-dot ncm-sync-conflict" title="Conflict"></span>' : ''}
             </div>
             <div class="ncm-list-item-meta">${escapeHTML(record.patientFile || "-")} • ${escapeHTML(record.patientId || "-")}</div>
-            <div class="ncm-list-item-status">
-                <span class="ncm-status-chip ncm-status-${status.replace(/\s+/g, '-').toLowerCase()}"><i class="fa-solid ${NCM_STATUS_ICON[status] || 'fa-circle'}"></i> ${status}</span>
-            </div>
         `;
         item.addEventListener("click", () => ncmSelectResidentPatient(record.patientKey));
         container.appendChild(item);
@@ -1402,11 +1345,9 @@ function ncmBuildTodaysListContentHtml_(patients) {
             <table class="ncm-doc-compare">
                 <thead><tr><th>Coordinator</th><th>Resident</th></tr></thead>
                 <tbody>
-                    <tr><td>Status: ${escapeHTML(r.coordinatorStatus || "Not Started")}</td><td>Status: ${escapeHTML(r.residentStatus || "Not Started")}</td></tr>
                     <tr><td>${escapeHTML(r.coordinatorBriefHistory || "-")}</td><td>${escapeHTML(r.residentBriefHistory || "-")}</td></tr>
-                    <tr><td><strong>Treatment Plan:</strong> ${escapeHTML(r.coordinatorTreatmentPlan || "-")}</td><td><strong>Assessment:</strong> ${escapeHTML(r.residentAssessment || "-")}</td></tr>
+                    <tr><td><strong>Treatment Plan:</strong> ${escapeHTML(r.coordinatorTreatmentPlan || "-")}</td><td><strong>Treatment Plan:</strong> ${escapeHTML(r.residentTreatmentPlan || "-")}</td></tr>
                     <tr><td><strong>Notes:</strong> ${escapeHTML(r.coordinatorNotes || "-")}</td><td><strong>Notes:</strong> ${escapeHTML(r.residentNotes || "-")}</td></tr>
-                    <tr><td><strong>Decision:</strong> ${escapeHTML(r.coordinatorDecision || "-")}</td><td><strong>Decision:</strong> ${escapeHTML(r.residentDecision || "-")}</td></tr>
                 </tbody>
             </table>
             ${hasShared ? `
