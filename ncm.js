@@ -26,13 +26,15 @@ const NCM_STATUS_OPTIONS = ["Not Started", "In Progress", "Ready", "Reviewed", "
 let ncmState = {
     selectedPatientKey: null,
     selectedListRole: "coordinator", // which list was clicked last, for context when opening the workspace
-    activeWorkspaceTab: "coordinator", // 'coordinator' | 'resident' | 'compare'
+    activeWorkspaceTab: "coordinator", // 'coordinator' | 'compare'
     searchQuery: "",
     activeFilter: "all",
     draft: {},          // { [patientKey]: { coordinator: {...unsaved fields}, resident: {...}, shared: {...} } }
     syncStatus: {},      // { [patientKey]: 'synced' | 'pending' | 'saving' | 'conflict' | 'error' }
     conflict: null,      // { patientKey, role, local, server } when a conflict UI should show
-    remoteNotice: null   // { patientKey, text } "Updated by X • time" banner for the open patient
+    remoteNotice: null,  // { patientKey, text } "Updated by X • time" banner for the open patient
+    // Resident Review tab (separate page, own selection/search/filter — see setupNcmWorkspace)
+    residentView: { selectedPatientKey: null, searchQuery: "", activeFilter: "all" }
 };
 
 // --- Local NCM store ---------------------------------------------------------
@@ -281,7 +283,15 @@ function ncmSetSyncStatus(patientKey, status) {
 /** Lightweight in-place update of the sync indicator, avoiding a full re-render on every status tick. */
 function ncmUpdateSyncStatusUI(patientKey) {
     if (ncmState.selectedPatientKey === patientKey) {
-        const indicator = document.querySelector(".ncm-sync-indicator");
+        const indicator = document.querySelector("#ncm-workspace-panel .ncm-sync-indicator");
+        if (indicator) {
+            const status = ncmGetSyncStatus(patientKey);
+            indicator.className = `ncm-sync-indicator ncm-sync-${status}`;
+            indicator.innerHTML = ncmSyncStatusLabel_(status);
+        }
+    }
+    if (ncmState.residentView.selectedPatientKey === patientKey) {
+        const indicator = document.querySelector("#ncm-resident-workspace-panel .ncm-sync-indicator");
         if (indicator) {
             const status = ncmGetSyncStatus(patientKey);
             indicator.className = `ncm-sync-indicator ncm-sync-${status}`;
@@ -289,6 +299,7 @@ function ncmUpdateSyncStatusUI(patientKey) {
         }
     }
     ncmRefreshListsIfVisible();
+    ncmRefreshResidentListIfVisible();
 }
 
 function ncmGetSyncStatus(patientKey) {
@@ -345,11 +356,13 @@ async function ncmTriggerBackgroundSync() {
             ncmSetSyncStatus(patientKey, ncmPendingCountForPatient(patientKey) > 0 ? "pending" : "synced");
             ncmRefreshListsIfVisible();
             if (ncmState.selectedPatientKey === patientKey) ncmRenderWorkspacePanel();
+            if (ncmState.residentView.selectedPatientKey === patientKey) ncmRenderResidentWorkspacePanel();
         } else if (result && result.conflict) {
             const role = entry.action === "updateResident" ? "resident" : "coordinator";
             ncmSetSyncStatus(patientKey, "conflict");
             ncmState.conflict = { patientKey, role, local: ncmGetLocalPatient(patientKey), server: result.server };
             if (ncmState.selectedPatientKey === patientKey) ncmRenderConflictBanner();
+            if (ncmState.residentView.selectedPatientKey === patientKey) ncmRenderResidentConflictBanner();
         } else {
             ncmSetSyncStatus(patientKey, "pending"); // network/lock failure — will retry next poll tick
         }
@@ -362,7 +375,8 @@ function ncmMergeRemoteChanges(remoteRows) {
     const store = ncmReadLocalStore();
     remoteRows.forEach(remote => {
         const local = store[remote.patientKey];
-        const isOpenWithUnsavedEdits = ncmState.selectedPatientKey === remote.patientKey &&
+        const isSelectedSomewhere = ncmState.selectedPatientKey === remote.patientKey || ncmState.residentView.selectedPatientKey === remote.patientKey;
+        const isOpenWithUnsavedEdits = isSelectedSomewhere &&
             ncmState.draft[remote.patientKey] && Object.keys(ncmState.draft[remote.patientKey]).length > 0;
 
         if (!local) {
@@ -379,13 +393,15 @@ function ncmMergeRemoteChanges(remoteRows) {
             return;
         }
         store[remote.patientKey] = remote;
-        if (ncmState.selectedPatientKey === remote.patientKey) {
+        if (isSelectedSomewhere) {
             ncmState.remoteNotice = { patientKey: remote.patientKey, text: ncmDescribeUpdater_(remote, local) };
         }
     });
     ncmWriteLocalStore(store);
     ncmRefreshListsIfVisible();
+    ncmRefreshResidentListIfVisible();
     if (ncmState.selectedPatientKey) ncmRenderRemoteNoticeBanner();
+    if (ncmState.residentView.selectedPatientKey) ncmRenderResidentRemoteNoticeBanner();
 }
 
 function ncmDescribeUpdater_(remote, local) {
@@ -398,6 +414,11 @@ function ncmDescribeUpdater_(remote, local) {
 function ncmRefreshListsIfVisible() {
     const pane = document.getElementById("tab-ncm");
     if (pane && pane.classList.contains("active")) renderNcmTab();
+}
+
+function ncmRefreshResidentListIfVisible() {
+    const pane = document.getElementById("tab-ncm-resident");
+    if (pane && pane.classList.contains("active")) renderNcmResidentTab();
 }
 
 // --- Deterministic "Patient at a Glance" + auto-summary (no AI — rule-based, never hallucinates) ---------------------------------------------------------
@@ -531,7 +552,6 @@ const NCM_STATUS_ICON = { "Not Started": "fa-circle", "In Progress": "fa-spinner
 function renderNcmTab() {
     ncmRenderToolbar();
     ncmRenderList("coordinator");
-    ncmRenderList("resident");
     if (ncmState.selectedPatientKey) {
         ncmRenderWorkspacePanel();
     } else {
@@ -550,9 +570,8 @@ function ncmRenderToolbar() {
             chip.dataset.filter = opt.key;
             chip.addEventListener("click", () => {
                 ncmState.activeFilter = opt.key;
-                document.querySelectorAll(".ncm-filter-chip").forEach(c => c.classList.toggle("active", c.dataset.filter === opt.key));
+                chipsEl.querySelectorAll(".ncm-filter-chip").forEach(c => c.classList.toggle("active", c.dataset.filter === opt.key));
                 ncmRenderList("coordinator");
-                ncmRenderList("resident");
             });
             chipsEl.appendChild(chip);
         });
@@ -607,7 +626,6 @@ function ncmSelectPatient(patientKey, listRole) {
     ncmState.activeWorkspaceTab = listRole;
     ncmState.remoteNotice = null;
     ncmRenderList("coordinator");
-    ncmRenderList("resident");
     ncmRenderWorkspacePanel();
 }
 
@@ -728,8 +746,7 @@ function ncmRenderWorkspacePanel() {
 
         <div class="ncm-role-tabs">
             <button class="ncm-role-tab ${ncmState.activeWorkspaceTab === "coordinator" ? "active" : ""}" data-tab="coordinator">Coordinator</button>
-            <button class="ncm-role-tab ${ncmState.activeWorkspaceTab === "resident" ? "active" : ""}" data-tab="resident">Resident</button>
-            <button class="ncm-role-tab ${ncmState.activeWorkspaceTab === "compare" ? "active" : ""}" data-tab="compare">Compare</button>
+            <button class="ncm-role-tab ${ncmState.activeWorkspaceTab === "compare" ? "active" : ""}" data-tab="compare">Compare (read-only)</button>
         </div>
         <div class="ncm-role-panel" id="ncm-role-panel"></div>
 
@@ -866,48 +883,59 @@ function ncmRenderFullRecord(record) {
     `).join("");
 }
 
+function ncmBuildRemoteNoticeHtml_(notice) {
+    return `
+        <div class="ncm-notice-banner">
+            <i class="fa-solid fa-bell"></i> ${escapeHTML(notice.text)}
+            <button class="btn btn-secondary btn-sm" data-dismiss-notice>Dismiss</button>
+        </div>
+    `;
+}
+
 function ncmRenderRemoteNoticeBanner() {
     const el = document.getElementById("ncm-remote-notice-banner");
     if (!el) return;
     const notice = ncmState.remoteNotice;
     if (!notice || notice.patientKey !== ncmState.selectedPatientKey) { el.innerHTML = ""; return; }
-    el.innerHTML = `
-        <div class="ncm-notice-banner">
-            <i class="fa-solid fa-bell"></i> ${escapeHTML(notice.text)}
-            <button class="btn btn-secondary btn-sm" id="ncm-refresh-notice-btn">Dismiss</button>
-        </div>
-    `;
-    const btn = document.getElementById("ncm-refresh-notice-btn");
-    if (btn) btn.addEventListener("click", () => { ncmState.remoteNotice = null; ncmRenderWorkspacePanel(); });
+    el.innerHTML = ncmBuildRemoteNoticeHtml_(notice);
+    el.querySelector("[data-dismiss-notice]").addEventListener("click", () => { ncmState.remoteNotice = null; ncmRenderWorkspacePanel(); });
 }
 
-function ncmRenderConflictBanner() {
-    const el = document.getElementById("ncm-conflict-banner");
+function ncmRenderResidentRemoteNoticeBanner() {
+    const el = document.getElementById("ncm-resident-remote-notice-banner");
     if (!el) return;
-    const conflict = ncmState.conflict;
-    if (!conflict || conflict.patientKey !== ncmState.selectedPatientKey) { el.innerHTML = ""; return; }
-    el.innerHTML = `
+    const notice = ncmState.remoteNotice;
+    if (!notice || notice.patientKey !== ncmState.residentView.selectedPatientKey) { el.innerHTML = ""; return; }
+    el.innerHTML = ncmBuildRemoteNoticeHtml_(notice);
+    el.querySelector("[data-dismiss-notice]").addEventListener("click", () => { ncmState.remoteNotice = null; ncmRenderResidentWorkspacePanel(); });
+}
+
+function ncmBuildConflictBannerHtml_(conflict) {
+    return `
         <div class="ncm-conflict-banner">
             <i class="fa-solid fa-triangle-exclamation"></i>
             <div>
                 <strong>Save conflict.</strong> Someone else saved this patient's ${conflict.role} section first. Your changes were NOT overwritten, but were not saved either.
                 <div class="ncm-conflict-actions">
-                    <button class="btn btn-secondary btn-sm" id="ncm-conflict-reload-btn">Reload Server Version</button>
-                    <button class="btn btn-primary btn-sm" id="ncm-conflict-keep-btn">Keep My Changes (Save as New Version)</button>
+                    <button class="btn btn-secondary btn-sm" data-conflict-action="reload">Reload Server Version</button>
+                    <button class="btn btn-primary btn-sm" data-conflict-action="keep">Keep My Changes (Save as New Version)</button>
                 </div>
             </div>
         </div>
     `;
-    document.getElementById("ncm-conflict-reload-btn").addEventListener("click", () => {
+}
+
+function ncmWireConflictBannerActions_(el, conflict, onResolved) {
+    el.querySelector('[data-conflict-action="reload"]').addEventListener("click", () => {
         const store = ncmReadLocalStore();
         store[conflict.patientKey] = conflict.server;
         ncmWriteLocalStore(store);
         ncmState.conflict = null;
         ncmSetSyncStatus(conflict.patientKey, "synced");
-        ncmRenderWorkspacePanel();
+        onResolved();
         showToast("Loaded latest server version.", "info");
     });
-    document.getElementById("ncm-conflict-keep-btn").addEventListener("click", () => {
+    el.querySelector('[data-conflict-action="keep"]').addEventListener("click", () => {
         const record = ncmGetLocalPatient(conflict.patientKey);
         const role = conflict.role;
         const versionField = `${role}Version`;
@@ -917,9 +945,27 @@ function ncmRenderConflictBanner() {
         ncmEnsureCurrentUser((user) => {
             const fields = {};
             (role === "coordinator" ? NCM_COORDINATOR_FIELD_DEFS : NCM_RESIDENT_FIELD_DEFS).forEach(def => { fields[def.key] = record[def.key]; });
-            ncmSaveRoleFields(conflict.patientKey, role, fields, user).then(() => ncmRenderWorkspacePanel());
+            ncmSaveRoleFields(conflict.patientKey, role, fields, user).then(onResolved);
         });
     });
+}
+
+function ncmRenderConflictBanner() {
+    const el = document.getElementById("ncm-conflict-banner");
+    if (!el) return;
+    const conflict = ncmState.conflict;
+    if (!conflict || conflict.patientKey !== ncmState.selectedPatientKey) { el.innerHTML = ""; return; }
+    el.innerHTML = ncmBuildConflictBannerHtml_(conflict);
+    ncmWireConflictBannerActions_(el, conflict, ncmRenderWorkspacePanel);
+}
+
+function ncmRenderResidentConflictBanner() {
+    const el = document.getElementById("ncm-resident-conflict-banner");
+    if (!el) return;
+    const conflict = ncmState.conflict;
+    if (!conflict || conflict.patientKey !== ncmState.residentView.selectedPatientKey) { el.innerHTML = ""; return; }
+    el.innerHTML = ncmBuildConflictBannerHtml_(conflict);
+    ncmWireConflictBannerActions_(el, conflict, ncmRenderResidentWorkspacePanel);
 }
 
 function ncmWireWorkspaceHeaderButtons(record) {
@@ -952,13 +998,17 @@ function ncmDeletePatient(patientKey) {
         ncmState.selectedPatientKey = null;
         ncmRenderEmptyWorkspace();
     }
+    if (ncmState.residentView.selectedPatientKey === patientKey) {
+        ncmState.residentView.selectedPatientKey = null;
+        ncmRenderResidentEmptyWorkspace();
+    }
 
     const user = ncmGetCurrentUser();
     ncmQueueMutation("delete", { patientKey, user: user ? user.name : "", role: user ? user.role : "" });
     ncmTriggerBackgroundSync();
 
     ncmRenderList("coordinator");
-    ncmRenderList("resident");
+    ncmRenderResidentList();
     showToast("Patient removed from NCM.", "success");
 }
 
@@ -969,6 +1019,15 @@ function ncmNavigate(direction) {
     const nextIdx = idx + direction;
     if (nextIdx < 0 || nextIdx >= list.length) return;
     ncmSelectPatient(list[nextIdx].patientKey, ncmState.selectedListRole);
+}
+
+function ncmNavigateResident(direction) {
+    const list = ncmGetResidentFilteredPatients();
+    const idx = list.findIndex(p => p.patientKey === ncmState.residentView.selectedPatientKey);
+    if (idx === -1) return;
+    const nextIdx = idx + direction;
+    if (nextIdx < 0 || nextIdx >= list.length) return;
+    ncmSelectResidentPatient(list[nextIdx].patientKey);
 }
 
 async function ncmHandleSave(patientKey, role) {
@@ -983,7 +1042,174 @@ async function ncmHandleSave(patientKey, role) {
         if (ncmState.draft[patientKey]) delete ncmState.draft[patientKey][role];
         showToast("Saved locally. Syncing...", "success");
         if (ncmState.selectedPatientKey === patientKey) ncmRenderWorkspacePanel();
+        if (ncmState.residentView.selectedPatientKey === patientKey) ncmRenderResidentWorkspacePanel();
     });
+}
+
+// --- Resident Review tab (separate page — NCM-only data, no Excel/master fields) ---------------------------------------------------------
+
+const NCM_RESIDENT_FILTER_OPTIONS = [
+    { key: "all", label: "All" },
+    { key: "not-started", label: "Not Started" },
+    { key: "in-progress", label: "In Progress" },
+    { key: "ready", label: "Ready" },
+    { key: "reviewed", label: "Reviewed" }
+];
+
+function ncmGetResidentFilteredPatients() {
+    return ncmGetAllLocalPatients()
+        .filter(r => ncmMatchesSearch(r, ncmState.residentView.searchQuery))
+        .filter(r => ncmMatchesFilter(r, ncmState.residentView.activeFilter, "resident"))
+        .sort((a, b) => (a.patientName || "").localeCompare(b.patientName || ""));
+}
+
+function renderNcmResidentTab() {
+    ncmRenderResidentToolbar();
+    ncmRenderResidentList();
+    if (ncmState.residentView.selectedPatientKey) {
+        ncmRenderResidentWorkspacePanel();
+    } else {
+        ncmRenderResidentEmptyWorkspace();
+    }
+}
+
+function ncmRenderResidentToolbar() {
+    const chipsEl = document.getElementById("ncm-resident-filter-chips");
+    if (chipsEl && chipsEl.children.length === 0) {
+        NCM_RESIDENT_FILTER_OPTIONS.forEach(opt => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "ncm-filter-chip" + (opt.key === ncmState.residentView.activeFilter ? " active" : "");
+            chip.textContent = opt.label;
+            chip.dataset.filter = opt.key;
+            chip.addEventListener("click", () => {
+                ncmState.residentView.activeFilter = opt.key;
+                chipsEl.querySelectorAll(".ncm-filter-chip").forEach(c => c.classList.toggle("active", c.dataset.filter === opt.key));
+                ncmRenderResidentList();
+            });
+            chipsEl.appendChild(chip);
+        });
+    }
+    const userChip = document.getElementById("ncm-resident-current-user-chip");
+    const user = ncmGetCurrentUser();
+    if (userChip) userChip.textContent = user ? `${user.name} (${user.role === "coordinator" ? "Coordinator" : "Resident"})` : "";
+}
+
+function ncmRenderResidentList() {
+    const container = document.getElementById("ncm-list-resident-only");
+    const countEl = document.getElementById("ncm-resident-only-count");
+    if (!container) return;
+
+    const patients = ncmGetResidentFilteredPatients();
+    if (countEl) countEl.textContent = patients.length;
+    container.innerHTML = "";
+
+    if (patients.length === 0) {
+        container.innerHTML = `<div class="ncm-list-empty">No patients match this view.</div>`;
+        return;
+    }
+
+    patients.forEach(record => {
+        const item = document.createElement("div");
+        item.className = "ncm-list-item" + (ncmState.residentView.selectedPatientKey === record.patientKey ? " selected" : "");
+        const status = record.residentStatus || "Not Started";
+        const syncStatus = ncmGetSyncStatus(record.patientKey);
+        item.innerHTML = `
+            <div class="ncm-list-item-main">
+                <span class="ncm-list-item-name">${escapeHTML(record.patientName || "Unnamed")}</span>
+                ${syncStatus === "pending" || syncStatus === "saving" ? '<span class="ncm-sync-dot ncm-sync-pending" title="Pending sync"></span>' : ''}
+                ${syncStatus === "conflict" ? '<span class="ncm-sync-dot ncm-sync-conflict" title="Conflict"></span>' : ''}
+            </div>
+            <div class="ncm-list-item-meta">${escapeHTML(record.patientFile || "-")} • ${escapeHTML(record.patientId || "-")}</div>
+            <div class="ncm-list-item-status">
+                <span class="ncm-status-chip ncm-status-${status.replace(/\s+/g, '-').toLowerCase()}"><i class="fa-solid ${NCM_STATUS_ICON[status] || 'fa-circle'}"></i> ${status}</span>
+            </div>
+        `;
+        item.addEventListener("click", () => ncmSelectResidentPatient(record.patientKey));
+        container.appendChild(item);
+    });
+}
+
+function ncmSelectResidentPatient(patientKey) {
+    ncmState.residentView.selectedPatientKey = patientKey;
+    ncmRenderResidentList();
+    ncmRenderResidentWorkspacePanel();
+}
+
+function ncmRenderResidentEmptyWorkspace() {
+    const panel = document.getElementById("ncm-resident-workspace-panel");
+    if (!panel) return;
+    panel.innerHTML = `
+        <div class="ncm-empty-state">
+            <i class="fa-solid fa-user-doctor"></i>
+            <h3>Select a patient</h3>
+            <p>Choose a patient from the list to review and edit your NCM notes.</p>
+        </div>
+    `;
+}
+
+function ncmRenderResidentWorkspacePanel() {
+    const panel = document.getElementById("ncm-resident-workspace-panel");
+    if (!panel) return;
+    const record = ncmGetLocalPatient(ncmState.residentView.selectedPatientKey);
+    if (!record) { ncmState.residentView.selectedPatientKey = null; ncmRenderResidentEmptyWorkspace(); return; }
+    const syncStatus = ncmGetSyncStatus(record.patientKey);
+
+    panel.innerHTML = `
+        <div class="ncm-workspace-header">
+            <div class="ncm-workspace-header-nav">
+                <button class="btn btn-secondary btn-sm" id="ncm-resident-prev-btn" title="Previous patient (Alt+Left)"><i class="fa-solid fa-chevron-left"></i></button>
+                <button class="btn btn-secondary btn-sm" id="ncm-resident-next-btn" title="Next patient (Alt+Right)"><i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+            <div class="ncm-workspace-identity">
+                <h2>${escapeHTML(record.patientName || "Unnamed")}</h2>
+                <div class="ncm-identity-row">
+                    <span>File ${escapeHTML(record.patientFile || "-")} &bull; ID ${escapeHTML(record.patientId || "-")}</span>
+                    ${record.diagnosis ? `<span class="ncm-identity-sep">&bull;</span><span>${escapeHTML(record.diagnosis)}</span>` : ""}
+                </div>
+                <div class="ncm-identity-badges">
+                    <span class="ncm-sync-indicator ncm-sync-${syncStatus}">${ncmSyncStatusLabel_(syncStatus)}</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="ncm-resident-remote-notice-banner"></div>
+        <div id="ncm-resident-conflict-banner"></div>
+
+        <div class="ncm-role-panel role-resident">
+            <div class="ncm-role-panel-heading"><i class="fa-solid fa-user-doctor"></i> Resident Workspace</div>
+            <div class="ncm-field-grid">
+                ${NCM_RESIDENT_FIELD_DEFS.map(def => `
+                    <div class="ncm-field">
+                        <label>${def.label}</label>
+                        ${def.type === "select"
+                            ? `<select data-field="${def.key}">${def.options.map(o => `<option value="${o}" ${record[def.key] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
+                            : def.type === "textarea"
+                            ? `<textarea data-field="${def.key}" rows="3">${escapeHTML(record[def.key] || "")}</textarea>`
+                            : `<input type="text" data-field="${def.key}" value="${escapeHTML(record[def.key] || "")}">`}
+                    </div>
+                `).join("")}
+            </div>
+            <div class="ncm-role-panel-footer">
+                <button class="btn btn-primary btn-sm" id="ncm-resident-save-btn"><i class="fa-solid fa-floppy-disk"></i> Save (Ctrl+S)</button>
+                <span class="ncm-role-version">v${record.residentVersion || 0}</span>
+            </div>
+        </div>
+    `;
+
+    panel.querySelectorAll("[data-field]").forEach(el => {
+        el.addEventListener("input", () => ncmTrackDraft(record.patientKey, "resident", el.dataset.field, el.value));
+        el.addEventListener("change", () => ncmTrackDraft(record.patientKey, "resident", el.dataset.field, el.value));
+    });
+    const saveBtn = document.getElementById("ncm-resident-save-btn");
+    if (saveBtn) saveBtn.addEventListener("click", () => ncmHandleSave(record.patientKey, "resident"));
+    const prevBtn = document.getElementById("ncm-resident-prev-btn");
+    const nextBtn = document.getElementById("ncm-resident-next-btn");
+    if (prevBtn) prevBtn.addEventListener("click", () => ncmNavigateResident(-1));
+    if (nextBtn) nextBtn.addEventListener("click", () => ncmNavigateResident(1));
+
+    ncmRenderResidentRemoteNoticeBanner();
+    ncmRenderResidentConflictBanner();
 }
 
 // --- Add Patient modal ---------------------------------------------------------
@@ -1279,19 +1505,37 @@ function ncmExportTodaysListToWord() {
 
 function setupNcmWorkspace() {
     document.addEventListener("keydown", (e) => {
-        const pane = document.getElementById("tab-ncm");
-        if (!pane || !pane.classList.contains("active")) return;
-        if (!ncmState.selectedPatientKey) return;
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-            e.preventDefault();
-            const role = ncmState.activeWorkspaceTab === "compare" ? "shared" : ncmState.activeWorkspaceTab;
-            ncmHandleSave(ncmState.selectedPatientKey, role);
-        } else if (e.altKey && e.key === "ArrowLeft") {
-            e.preventDefault();
-            ncmNavigate(-1);
-        } else if (e.altKey && e.key === "ArrowRight") {
-            e.preventDefault();
-            ncmNavigate(1);
+        const coordPane = document.getElementById("tab-ncm");
+        const residentPane = document.getElementById("tab-ncm-resident");
+        const inCoordTab = coordPane && coordPane.classList.contains("active");
+        const inResidentTab = residentPane && residentPane.classList.contains("active");
+        if (!inCoordTab && !inResidentTab) return;
+
+        if (inCoordTab) {
+            if (!ncmState.selectedPatientKey) return;
+            if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+                e.preventDefault();
+                const role = ncmState.activeWorkspaceTab === "compare" ? "shared" : ncmState.activeWorkspaceTab;
+                ncmHandleSave(ncmState.selectedPatientKey, role);
+            } else if (e.altKey && e.key === "ArrowLeft") {
+                e.preventDefault();
+                ncmNavigate(-1);
+            } else if (e.altKey && e.key === "ArrowRight") {
+                e.preventDefault();
+                ncmNavigate(1);
+            }
+        } else if (inResidentTab) {
+            if (!ncmState.residentView.selectedPatientKey) return;
+            if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+                e.preventDefault();
+                ncmHandleSave(ncmState.residentView.selectedPatientKey, "resident");
+            } else if (e.altKey && e.key === "ArrowLeft") {
+                e.preventDefault();
+                ncmNavigateResident(-1);
+            } else if (e.altKey && e.key === "ArrowRight") {
+                e.preventDefault();
+                ncmNavigateResident(1);
+            }
         }
     });
 
@@ -1300,7 +1544,14 @@ function setupNcmWorkspace() {
         searchInput.addEventListener("input", () => {
             ncmState.searchQuery = searchInput.value;
             ncmRenderList("coordinator");
-            ncmRenderList("resident");
+        });
+    }
+
+    const residentSearchInput = document.getElementById("ncm-resident-search-input");
+    if (residentSearchInput) {
+        residentSearchInput.addEventListener("input", () => {
+            ncmState.residentView.searchQuery = residentSearchInput.value;
+            ncmRenderResidentList();
         });
     }
 

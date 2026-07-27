@@ -56,9 +56,13 @@
                         <span class="badge badge-amber" id="badge-followup">0</span>
                     </button>
                     <button class="nav-item" data-tab="ncm" id="nav-ncm">
-                        <i class="fa-solid fa-user-doctor"></i>
+                        <i class="fa-solid fa-user-nurse"></i>
                         <span>New Cases Meeting</span>
                         <span class="badge badge-indigo" id="badge-ncm">0</span>
+                    </button>
+                    <button class="nav-item" data-tab="ncm-resident" id="nav-ncm-resident">
+                        <i class="fa-solid fa-stethoscope"></i>
+                        <span>Resident Review</span>
                     </button>
                     <button class="nav-item" data-tab="inpatient" id="nav-inpatient">
                         <i class="fa-solid fa-bed"></i>
@@ -630,13 +634,38 @@
                                     <h3><i class="fa-solid fa-user-nurse"></i> Coordinator <span class="ncm-list-count" id="ncm-coord-count">0</span></h3>
                                     <div class="ncm-list-scroll" id="ncm-list-coordinator"></div>
                                 </div>
-                                <div class="ncm-list-panel glass-card">
-                                    <h3><i class="fa-solid fa-user-doctor"></i> Resident Physician <span class="ncm-list-count" id="ncm-resident-count">0</span></h3>
-                                    <div class="ncm-list-scroll" id="ncm-list-resident"></div>
-                                </div>
                             </div>
                             <div class="ncm-workspace-panel glass-card" id="ncm-workspace-panel">
                                 <!-- Populated by ncm.js: empty state or the selected patient's workspace -->
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4b. RESIDENT / PHYSICIAN REVIEW — separate tab, NCM-only fields, no Excel/master data -->
+                <section class="tab-pane" id="tab-ncm-resident">
+                    <div class="ncm-workspace" id="ncm-resident-workspace">
+                        <div class="ncm-toolbar glass-card">
+                            <div class="search-box ncm-search-box">
+                                <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                                <label for="ncm-resident-search-input" class="sr-only">Search NCM patients by name, ID, or file number</label>
+                                <input type="text" id="ncm-resident-search-input" placeholder="Search by name, ID, or file number...">
+                            </div>
+                            <div class="ncm-filter-chips" id="ncm-resident-filter-chips" role="group" aria-label="Resident NCM filters"></div>
+                            <div class="ncm-toolbar-actions">
+                                <span class="ncm-current-user-chip" id="ncm-resident-current-user-chip"></span>
+                            </div>
+                        </div>
+
+                        <div class="ncm-main-grid">
+                            <div class="ncm-lists-column">
+                                <div class="ncm-list-panel glass-card">
+                                    <h3><i class="fa-solid fa-user-doctor"></i> Resident Patients <span class="ncm-list-count" id="ncm-resident-only-count">0</span></h3>
+                                    <div class="ncm-list-scroll" id="ncm-list-resident-only"></div>
+                                </div>
+                            </div>
+                            <div class="ncm-workspace-panel glass-card" id="ncm-resident-workspace-panel">
+                                <!-- Populated by ncm.js: empty state or the selected patient's resident-only workspace -->
                             </div>
                         </div>
                     </div>

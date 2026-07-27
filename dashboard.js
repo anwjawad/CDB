@@ -1031,6 +1031,8 @@ function setupTabSwitching() {
                 renderFollowupTab();
             } else if (targetTab === 'ncm') {
                 renderNcmTab();
+            } else if (targetTab === 'ncm-resident') {
+                renderNcmResidentTab();
             } else if (targetTab === 'inpatient') {
                 renderInpatientTab();
             } else if (targetTab === 'outpatient') {
@@ -1721,6 +1723,7 @@ function setupFilterListeners() {
             // Re-render other tabs to clear their search
             renderFollowupTab();
             renderNcmTab();
+            renderNcmResidentTab();
             renderInpatientTab();
             renderOutpatientTab();
             renderBarriersTab();
