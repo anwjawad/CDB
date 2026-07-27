@@ -297,6 +297,8 @@ function actionImport_(params) {
     sharedNotes: patient.sharedNotes || "",
     coordinatorBriefHistory: patient.coordinatorBriefHistory || "",
     residentBriefHistory: patient.residentBriefHistory || "",
+    coordinatorTreatmentPlan: patient.coordinatorTreatmentPlan || "",
+    residentTreatmentPlan: patient.residentTreatmentPlan || "",
     coordinatorVersion: 0,
     residentVersion: 0,
     createdAt: now,
