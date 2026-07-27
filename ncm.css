@@ -1,0 +1,763 @@
+/* ===================================================================
+   NCM Collaborative Workspace — styles
+   Uses only the existing design tokens from styles.css (--color-*,
+   --card-*, --text-*, --surface-*) so it matches dark/light theme
+   automatically. No new tokens introduced.
+   =================================================================== */
+
+.ncm-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: 100%;
+}
+
+/* --- Toolbar --- */
+
+.ncm-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 14px 18px;
+}
+
+.ncm-search-box {
+    flex: 0 0 280px;
+}
+
+.ncm-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    flex: 1 1 auto;
+}
+
+.ncm-filter-chip {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--card-border);
+    background: var(--surface-control);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-fast);
+    white-space: nowrap;
+}
+
+.ncm-filter-chip:hover {
+    border-color: var(--color-primary);
+    color: var(--text-primary);
+}
+
+.ncm-filter-chip.active {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #ffffff;
+}
+
+.ncm-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+}
+
+.ncm-current-user-chip {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+/* --- Main grid: lists + workspace panel --- */
+
+.ncm-main-grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+    align-items: start;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.ncm-lists-column {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.ncm-list-panel {
+    padding: 16px;
+    max-height: 46vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.ncm-list-panel h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--card-border);
+}
+
+.ncm-list-panel h3 i {
+    color: var(--color-primary);
+}
+
+.ncm-list-count {
+    margin-left: auto;
+    background: var(--surface-control);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.ncm-list-scroll {
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-right: 4px;
+}
+
+.ncm-list-empty {
+    padding: 24px 8px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.ncm-list-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: var(--surface-control);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.ncm-list-item:hover {
+    border-color: var(--color-primary-glow);
+    background: var(--color-primary-glow);
+}
+
+.ncm-list-item.selected {
+    border-color: var(--color-primary);
+    background: var(--color-primary-glow);
+    box-shadow: var(--focus-ring);
+}
+
+.ncm-list-item-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ncm-list-item-name {
+    font-weight: 700;
+    font-size: 13.5px;
+    color: var(--text-primary);
+}
+
+.ncm-list-item-meta {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.ncm-list-item-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.ncm-status-chip-other {
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+
+.ncm-sync-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.ncm-sync-pending { background: var(--color-warning); }
+.ncm-sync-conflict { background: var(--color-danger); }
+
+/* --- Badges & status chips (shared) --- */
+
+.ncm-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.ncm-badge-warn {
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.ncm-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+}
+
+.ncm-status-not-started { background: var(--surface-control); color: var(--text-muted); }
+.ncm-status-in-progress { background: var(--color-info-bg); color: var(--color-info); }
+.ncm-status-ready { background: var(--color-success-bg); color: var(--color-success); }
+.ncm-status-reviewed { background: var(--color-primary-glow); color: var(--color-primary); }
+.ncm-status-completed { background: var(--color-success-bg); color: var(--color-success); }
+
+/* --- Workspace panel --- */
+
+.ncm-workspace-panel {
+    padding: 20px 24px;
+    overflow-y: auto;
+    max-height: calc(100vh - 220px);
+}
+
+.ncm-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+.ncm-empty-state i {
+    font-size: 40px;
+    color: var(--color-primary);
+    opacity: 0.5;
+    margin-bottom: 14px;
+}
+
+.ncm-empty-state h3 {
+    color: var(--text-primary);
+    margin: 0 0 6px 0;
+}
+
+.ncm-workspace-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--card-border);
+    margin-bottom: 18px;
+}
+
+.ncm-workspace-header-nav {
+    display: flex;
+    gap: 6px;
+}
+
+.ncm-workspace-identity {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.ncm-workspace-identity h2 {
+    margin: 0 0 4px 0;
+    font-size: 20px;
+    color: var(--text-primary);
+}
+
+.ncm-identity-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.ncm-identity-sep {
+    color: var(--text-muted);
+}
+
+.ncm-identity-badges {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.ncm-sync-indicator {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ncm-sync-synced { background: var(--color-success-bg); color: var(--color-success); }
+.ncm-sync-pending, .ncm-sync-saving { background: var(--color-warning-bg); color: var(--color-warning); }
+.ncm-sync-conflict { background: var(--color-danger-bg); color: var(--color-danger); }
+
+/* --- Notice / conflict banners --- */
+
+.ncm-notice-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--color-info-bg);
+    color: var(--text-primary);
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+.ncm-notice-banner button { margin-left: auto; }
+
+.ncm-conflict-banner {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: var(--color-danger-bg);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--text-primary);
+    font-size: 13px;
+    margin-bottom: 14px;
+}
+
+.ncm-conflict-banner i {
+    color: var(--color-danger);
+    font-size: 18px;
+    margin-top: 2px;
+}
+
+.ncm-conflict-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+/* --- Patient at a Glance --- */
+
+.ncm-at-a-glance h4,
+.ncm-shared-section h4,
+.ncm-history-panel h4 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 0 0 10px 0;
+}
+
+.ncm-glance-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.ncm-glance-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--card-border);
+    background: var(--surface-control);
+}
+
+.ncm-glance-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 14px;
+}
+
+.ncm-glance-ok .ncm-glance-icon { background: var(--color-success-bg); color: var(--color-success); }
+.ncm-glance-pending .ncm-glance-icon { background: var(--color-warning-bg); color: var(--color-warning); }
+.ncm-glance-danger .ncm-glance-icon { background: var(--color-danger-bg); color: var(--color-danger); }
+.ncm-glance-info .ncm-glance-icon { background: var(--color-primary-glow); color: var(--color-primary); }
+.ncm-glance-none .ncm-glance-icon { background: var(--surface-raised); color: var(--text-muted); }
+
+.ncm-glance-body {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.ncm-glance-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.ncm-glance-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Auto summary --- */
+
+.ncm-auto-summary {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: var(--color-primary-glow);
+    margin-bottom: 20px;
+}
+
+.ncm-auto-summary i {
+    color: var(--color-primary);
+    margin-top: 3px;
+}
+
+.ncm-auto-summary p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-primary);
+}
+
+/* --- Field grids (shared info + role panels) --- */
+
+.ncm-field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.ncm-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ncm-field label {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.ncm-field input,
+.ncm-field textarea,
+.ncm-field select,
+.ncm-modal-field-row input,
+.form-group input,
+.form-group textarea,
+.form-group select {
+    background: var(--surface-control);
+    border: 1px solid var(--card-border);
+    border-radius: 7px;
+    padding: 9px 11px;
+    font-size: 13px;
+    color: var(--text-primary);
+    font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ncm-field input:focus,
+.ncm-field textarea:focus,
+.ncm-field select:focus,
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: var(--focus-ring);
+}
+
+.ncm-field textarea {
+    resize: vertical;
+    min-height: 56px;
+}
+
+.ncm-shared-section {
+    padding: 16px;
+    border-radius: 8px;
+    background: var(--surface-raised);
+    margin-bottom: 20px;
+}
+
+/* --- Role tabs --- */
+
+.ncm-role-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--card-border);
+    margin-bottom: 16px;
+}
+
+.ncm-role-tab {
+    padding: 9px 16px;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: var(--transition-fast);
+}
+
+.ncm-role-tab:hover {
+    color: var(--text-primary);
+}
+
+.ncm-role-tab.active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+}
+
+.ncm-role-panel {
+    margin-bottom: 22px;
+}
+
+.ncm-role-panel-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.ncm-role-version {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+/* --- Compare view --- */
+
+.ncm-compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--card-border);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.ncm-compare-col-header {
+    background: var(--surface-raised);
+    padding: 10px 14px;
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.ncm-compare-cell {
+    background: var(--surface-control);
+    padding: 12px 14px;
+}
+
+.ncm-compare-label {
+    display: block;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.ncm-compare-cell p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.ncm-compare-diff {
+    color: var(--color-warning) !important;
+    font-weight: 600;
+}
+
+/* --- Full record --- */
+
+.ncm-full-record {
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    margin-bottom: 18px;
+    overflow: hidden;
+}
+
+.ncm-full-record summary {
+    padding: 12px 16px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--surface-raised);
+}
+
+.ncm-record-group {
+    padding: 14px 16px;
+    border-top: 1px solid var(--card-border);
+}
+
+.ncm-record-group h5 {
+    margin: 0 0 10px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-primary);
+}
+
+.ncm-record-group-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.ncm-record-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ncm-record-field-label {
+    font-size: 10.5px;
+    color: var(--text-muted);
+}
+
+.ncm-record-field-value {
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+/* --- History panel --- */
+
+.ncm-history-panel ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ncm-history-panel li {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 8px 12px;
+    background: var(--surface-control);
+    border-radius: 6px;
+}
+
+/* --- Modals (Add Patient / Link / User picker) --- */
+
+.ncm-small-modal {
+    width: 480px;
+}
+
+.ncm-modal-field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ncm-link-results {
+    margin-top: 14px;
+    max-height: 280px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ncm-link-result {
+    padding: 10px 12px;
+    border-radius: 7px;
+    background: var(--surface-control);
+    border: 1px solid var(--card-border);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: var(--transition-fast);
+}
+
+.ncm-link-result:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-glow);
+}
+
+.ncm-link-result strong {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.ncm-link-result span {
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.drawer-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+/* --- Responsive --- */
+
+@media (max-width: 1180px) {
+    .ncm-main-grid {
+        grid-template-columns: 300px 1fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .ncm-main-grid {
+        grid-template-columns: 1fr;
+    }
+    .ncm-list-panel {
+        max-height: 320px;
+    }
+    .ncm-workspace-panel {
+        max-height: none;
+    }
+    .ncm-small-modal {
+        width: 92vw;
+    }
+    .ncm-modal-field-row {
+        grid-template-columns: 1fr;
+    }
+}

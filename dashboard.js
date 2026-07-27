@@ -919,6 +919,7 @@ function initApp() {
 
     setupResetCache();
     setupDailyDigestButton();
+    setupNcmWorkspace();
     if (dependenciesReady) {
         loadDashboardData({ silent: true });
     } else {
@@ -1876,12 +1877,17 @@ function renderMainTable() {
             </td>
             <td>
                 <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
+                <button class="btn btn-secondary btn-sm open-ncm-btn" title="Import to NCM"><i class="fa-solid fa-user-doctor"></i></button>
             </td>
         `;
-        
+
         row.querySelector(".open-details-btn").addEventListener("click", (e) => {
             e.stopPropagation();
             openPatientDrawer(pat);
+        });
+        row.querySelector(".open-ncm-btn").addEventListener("click", (e) => {
+            e.stopPropagation();
+            ncmHandleImportClick(pat);
         });
 
         row.addEventListener("click", () => { openPatientDrawer(pat); });
@@ -1992,52 +1998,8 @@ function renderFollowupTab() {
 }
 
 // --- Render New Cases Meeting Tab ---
-function renderNcmTab() {
-    const tbody = document.getElementById("ncm-table-body");
-    tbody.innerHTML = "";
-    
-    const searchVal = document.getElementById("ncm-search-input") ? document.getElementById("ncm-search-input").value.toLowerCase() : "";
-    
-    const list = patientsData.filter(pat => {
-        const isNcm = isYesValue(getPatientVal(pat, 'ncm'));
-        if (!isNcm) return false;
-        if (!searchVal) return true;
-        
-        const name = getPatientVal(pat, 'name').toLowerCase();
-        const id = getPatientVal(pat, 'id').toLowerCase();
-        const file = getPatientVal(pat, 'file').toLowerCase();
-        return name.includes(searchVal) || id.includes(searchVal) || file.includes(searchVal);
-    });
-    
-    if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9"><div class="table-empty-state"><i class="fa-solid fa-user-doctor"></i><h4>No NCM cases</h4><p>No cases are scheduled for the weekly meeting.</p></div></td></tr>`;
-        return;
-    }
-
-    list.forEach(pat => {
-        const row = document.createElement("tr");
-        if (hasActiveBarrier(pat)) row.classList.add("has-barrier");
-        row.setAttribute("data-patient-id", getPatientVal(pat, 'id'));
-        row.innerHTML = `
-            <td>${getPatientNameHTML(pat)}</td>
-            <td>${getEscapedPatientVal(pat, 'id')}</td>
-            <td>${getEscapedPatientVal(pat, 'diagnosis')}</td>
-            <td>${getEscapedPatientVal(pat, 'clinic')}</td>
-            <td>${getEscapedPatientVal(pat, 'coordinator')}</td>
-            <td>${getEscapedPatientVal(pat, 'physician')}</td>
-            <td>${getEscapedPatientVal(pat, 'treatmentPlan', '-')}</td>
-            <td class="text-indigo"><strong>${getEscapedPatientVal(pat, 'ncmDecision', '-')}</strong></td>
-            <td><span class="status-pill ${getPillClass(getPatientVal(pat, 'status'))}">${getEscapedPatientVal(pat, 'status')}</span></td>
-            <td>
-                <button class="btn btn-secondary btn-sm open-details-btn"><i class="fa-solid fa-eye"></i> Details</button>
-            </td>
-        `;
-        row.querySelector(".open-details-btn").addEventListener("click", () => openPatientDrawer(pat));
-        row.addEventListener("click", () => openPatientDrawer(pat));
-        makeRowInteractive(row, pat);
-        tbody.appendChild(row);
-    });
-}
+// renderNcmTab() is now defined in ncm.js (NCM Collaborative Workspace) — the
+// old Excel-only NCM table it replaced lived here.
 
 // --- Render Inpatient Tab ---
 function renderInpatientTab() {
@@ -2183,6 +2145,9 @@ function renderBarriersTab() {
 
 // --- Sliding Details Drawer Render ---
 function openPatientDrawer(pat) {
+    const importNcmBtn = document.getElementById("drawer-import-ncm-btn");
+    if (importNcmBtn) importNcmBtn.onclick = () => ncmHandleImportClick(pat);
+
     // Fill values
     document.getElementById("drawer-patient-name").innerText = getPatientVal(pat, 'name');
     document.getElementById("drawer-patient-id").innerText = getPatientVal(pat, 'id') || '-';
@@ -3141,7 +3106,7 @@ function setupTabSearches() {
     };
     
     listenToSearch("followup-search-input", renderFollowupTab);
-    listenToSearch("ncm-search-input", renderNcmTab);
+    // ncm-search-input is wired inside setupNcmWorkspace() (ncm.js) — it manages its own state.
     listenToSearch("inpatient-search-input", renderInpatientTab);
     listenToSearch("outpatient-search-input", renderOutpatientTab);
     listenToSearch("barriers-search-input", renderBarriersTab);

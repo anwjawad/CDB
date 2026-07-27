@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Custom Style System -->
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="ncm.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- SheetJS for client-side Excel parsing -->
@@ -594,48 +595,36 @@
                     </div>
                 </section>
 
-                <!-- 4. NEW CASES MEETING TAB -->
+                <!-- 4. NEW CASES MEETING — NCM COLLABORATIVE WORKSPACE -->
                 <section class="tab-pane" id="tab-ncm">
-                    <div class="info-alert glass-card bg-indigo-glow">
-                        <div class="alert-icon"><i class="fa-solid fa-user-doctor"></i></div>
-                        <div class="alert-content">
-                            <h4>Weekly New Cases Meeting (NCM) Review</h4>
-                            <p>Patients listed in this section have been flagged for review in the weekly multidisciplinary meeting (New Cases Meeting column set to Yes).</p>
-                        </div>
-                    </div>
-                    <div class="table-container glass-card margin-top-20">
-                        <div class="table-actions">
-                            <div class="search-box">
+                    <div class="ncm-workspace" id="ncm-workspace">
+                        <div class="ncm-toolbar glass-card">
+                            <div class="search-box ncm-search-box">
                                 <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-                                <label for="ncm-search-input" class="sr-only">Search new cases meeting patients by name, ID, or file number</label>
+                                <label for="ncm-search-input" class="sr-only">Search NCM patients by name, ID, or file number</label>
                                 <input type="text" id="ncm-search-input" placeholder="Search by name, ID, or file number...">
                             </div>
-                            <div class="table-buttons">
-                                <button class="btn btn-secondary btn-sm print-btn" id="print-ncm-btn" data-table-id="ncm-table" data-tab-name="New Cases Meeting">
-                                    <i class="fa-solid fa-print"></i> Print Report
-                                </button>
+                            <div class="ncm-filter-chips" id="ncm-filter-chips" role="group" aria-label="NCM filters"></div>
+                            <div class="ncm-toolbar-actions">
+                                <span class="ncm-current-user-chip" id="ncm-current-user-chip"></span>
+                                <button class="btn btn-primary btn-sm" id="ncm-add-patient-btn"><i class="fa-solid fa-plus"></i> Add Patient</button>
                             </div>
                         </div>
-                        <div class="responsive-table-wrapper">
-                            <table class="data-table" id="ncm-table">
-                                <thead>
-                                    <tr>
-                                        <th>Patient Name</th>
-                                        <th>ID</th>
-                                        <th>Diagnosis</th>
-                                        <th>Clinic</th>
-                                        <th>Coordinator</th>
-                                        <th>Primary Physician</th>
-                                        <th>Proposed Treatment Plan</th>
-                                        <th>NCM Decision</th>
-                                        <th>Overall Case Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="ncm-table-body">
-                                    <!-- Dynamic content -->
-                                </tbody>
-                            </table>
+
+                        <div class="ncm-main-grid">
+                            <div class="ncm-lists-column">
+                                <div class="ncm-list-panel glass-card">
+                                    <h3><i class="fa-solid fa-user-nurse"></i> Coordinator <span class="ncm-list-count" id="ncm-coord-count">0</span></h3>
+                                    <div class="ncm-list-scroll" id="ncm-list-coordinator"></div>
+                                </div>
+                                <div class="ncm-list-panel glass-card">
+                                    <h3><i class="fa-solid fa-user-doctor"></i> Resident Physician <span class="ncm-list-count" id="ncm-resident-count">0</span></h3>
+                                    <div class="ncm-list-scroll" id="ncm-list-resident"></div>
+                                </div>
+                            </div>
+                            <div class="ncm-workspace-panel glass-card" id="ncm-workspace-panel">
+                                <!-- Populated by ncm.js: empty state or the selected patient's workspace -->
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -1088,9 +1077,12 @@
                     <span><i class="fa-solid fa-folder-open"></i> File Number: <strong id="drawer-patient-file">-</strong></span>
                 </div>
             </div>
-            <button class="btn-close-drawer" id="close-drawer-btn" aria-label="Close Details">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
+            <div class="drawer-header-actions">
+                <button class="btn btn-secondary btn-sm" id="drawer-import-ncm-btn"><i class="fa-solid fa-user-doctor"></i> Import to NCM</button>
+                <button class="btn-close-drawer" id="close-drawer-btn" aria-label="Close Details">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
         </div>
         <div class="drawer-body">
             <!-- High-Alert Barrier Card -->
@@ -1416,7 +1408,102 @@
         </div>
     </div>
 
+    <!-- NCM: First-use role/name picker (no real login — see docs/superpowers/specs) -->
+    <div id="ncm-user-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ncm-user-modal-title">
+        <div class="modal-card glass-card ncm-small-modal">
+            <div class="modal-header">
+                <h3 id="ncm-user-modal-title"><i class="fa-solid fa-id-badge"></i> Who's using NCM?</h3>
+            </div>
+            <div class="modal-body">
+                <p>This identifies your edits to others in the meeting. No password needed.</p>
+                <div class="form-group">
+                    <label for="ncm-user-name-input">Your name</label>
+                    <input type="text" id="ncm-user-name-input" placeholder="e.g. Jawad">
+                </div>
+                <div class="form-group margin-top-15">
+                    <label for="ncm-user-role-select">Your role</label>
+                    <select id="ncm-user-role-select">
+                        <option value="coordinator">Coordinator</option>
+                        <option value="resident">Resident Physician</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="ncm-user-confirm-btn">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NCM: Add Patient (NCM-only, not required to exist in the Excel tracker) -->
+    <div id="ncm-add-patient-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ncm-add-patient-title">
+        <div class="modal-card glass-card ncm-small-modal">
+            <div class="modal-header">
+                <h3 id="ncm-add-patient-title"><i class="fa-solid fa-user-plus"></i> Add Patient to NCM</h3>
+                <button class="btn-close-modal" id="ncm-add-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="ncm-add-name">Patient Name *</label>
+                    <input type="text" id="ncm-add-name">
+                </div>
+                <div class="ncm-modal-field-row">
+                    <div class="form-group">
+                        <label for="ncm-add-file">Patient File</label>
+                        <input type="text" id="ncm-add-file">
+                    </div>
+                    <div class="form-group">
+                        <label for="ncm-add-id">Patient ID</label>
+                        <input type="text" id="ncm-add-id">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="ncm-add-physician">Primary Physician</label>
+                    <input type="text" id="ncm-add-physician">
+                </div>
+                <div class="form-group">
+                    <label for="ncm-add-history">Brief History</label>
+                    <textarea id="ncm-add-history" rows="2"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="ncm-add-plan">Treatment Plan</label>
+                    <textarea id="ncm-add-plan" rows="2"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="ncm-add-notes">Notes</label>
+                    <textarea id="ncm-add-notes" rows="2"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="ncm-add-cancel-btn">Cancel</button>
+                <button class="btn btn-primary" id="ncm-add-submit-btn"><i class="fa-solid fa-plus"></i> Add Patient</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NCM: Link an NCM-only patient to a Master Registry patient -->
+    <div id="ncm-link-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="ncm-link-title">
+        <div class="modal-card glass-card ncm-small-modal">
+            <div class="modal-header">
+                <h3 id="ncm-link-title"><i class="fa-solid fa-link"></i> Link to Master Registry</h3>
+                <button class="btn-close-modal" id="ncm-link-close-btn" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="search-box">
+                    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                    <label for="ncm-link-search-input" class="sr-only">Search Master Registry</label>
+                    <input type="text" id="ncm-link-search-input" placeholder="Search by name, ID, or file number...">
+                </div>
+                <div id="ncm-link-results" class="ncm-link-results"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="ncm-link-cancel-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Core Scripts -->
+    <script src="ncm-sync.js"></script>
+    <script src="ncm.js"></script>
     <script src="dashboard.js"></script>
 </body>
 </html>
