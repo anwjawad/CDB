@@ -389,6 +389,16 @@ body {
     font-weight: 600;
 }
 
+.dashboard-section-header {
+    margin: 28px 0 16px;
+}
+
+.dashboard-section-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
 .chart-container {
     position: relative;
     width: 100%;

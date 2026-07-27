@@ -13,7 +13,8 @@ const EMPTY_COLUMN_FILTER_LABEL = "Empty / No data";
 // --- App Configuration & Shared Utilities ---
 const STORAGE_KEYS = Object.freeze({
     theme: "theme",
-    data: "dashboard_static_data"
+    data: "dashboard_static_data",
+    snapshotHistory: "dashboard_snapshot_history"
 });
 
 const VALUE_ALIASES = Object.freeze({
@@ -22,7 +23,8 @@ const VALUE_ALIASES = Object.freeze({
     pending: ["pending", "on hold", "قيد الانتظار", "معلق"],
     approved: ["approved", "active", "yes", "completed", "complete", "نعم", "موافق عليه", "تم التنسيق"],
     rejected: ["rejected", "closed", "no", "لا", "مرفوض", "ملغي"],
-    treatment: ["treatment", "علاج"]
+    treatment: ["treatment", "علاج"],
+    closed: ["closed", "completed", "complete", "discharged", "مكتمل", "مغلق", "منتهي"]
 });
 
 function normalizeValue(value) {
@@ -158,6 +160,154 @@ function getPatientVal(pat, type) {
         }
     }
     return "";
+}
+
+// --- Operational KPIs: Aging / Completeness / Turnaround helpers ---
+function isClosedValue(value) { return valueMatches(value, "closed"); }
+function isClosedCase(pat) { return isClosedValue(getPatientVal(pat, 'status')); }
+
+function getPatientAgingDays(pat) {
+    if (isClosedCase(pat)) return null;
+    if (isValidDateValue(getPatientVal(pat, 'chemoDate'))) return null;
+    const visitDate = getPatientVal(pat, 'visitDate');
+    if (!isValidDateValue(visitDate)) return null;
+    const diffMs = Date.now() - new Date(visitDate + "T00:00:00").getTime();
+    return Math.floor(diffMs / 86400000);
+}
+
+function getAgingBucket(days) {
+    if (days === null || days === undefined) return null;
+    if (days <= 3) return '0-3';
+    if (days <= 7) return '4-7';
+    if (days <= 14) return '8-14';
+    return '15+';
+}
+
+function matchesAgingBucket(pat, bucketKey) {
+    return getAgingBucket(getPatientAgingDays(pat)) === bucketKey;
+}
+
+function getPatientCompleteness(pat) {
+    const keys = Object.keys(KEY_MAP);
+    const filled = keys.filter(k => !isEmptyLike(getPatientVal(pat, k))).length;
+    return (filled / keys.length) * 100;
+}
+
+function computeAvgCompleteness() {
+    const eligible = patientsData.filter(pat => !isClosedCase(pat));
+    if (eligible.length === 0) return 0;
+    const total = eligible.reduce((sum, pat) => sum + getPatientCompleteness(pat), 0);
+    return Math.round(total / eligible.length);
+}
+
+function computeAvgTurnaroundDays() {
+    const diffs = [];
+    patientsData.forEach(pat => {
+        const visitDate = getPatientVal(pat, 'visitDate');
+        const chemoDate = getPatientVal(pat, 'chemoDate');
+        if (!isValidDateValue(visitDate) || !isValidDateValue(chemoDate)) return;
+        const diff = (new Date(chemoDate) - new Date(visitDate)) / 86400000;
+        if (diff >= 0) diffs.push(diff);
+    });
+    if (diffs.length === 0) return null;
+    return Math.round((diffs.reduce((a, b) => a + b, 0) / diffs.length) * 10) / 10;
+}
+
+// --- Workload & Capacity: coordinator and clinic aggregation helpers ---
+function computeCoordinatorWorkload() {
+    const counts = {};
+    patientsData.forEach(pat => {
+        if (isClosedCase(pat)) return;
+        const coordinator = getPatientVal(pat, 'coordinator');
+        if (isEmptyLike(coordinator)) return;
+        counts[coordinator] = (counts[coordinator] || 0) + 1;
+    });
+    return Object.entries(counts)
+        .map(([coordinator, count]) => ({ coordinator, count }))
+        .sort((a, b) => b.count - a.count);
+}
+
+function computeClinicLoadBalance() {
+    const clinicData = {};
+    patientsData.forEach(pat => {
+        if (isClosedCase(pat)) return;
+        const clinic = getPatientVal(pat, 'clinic');
+        if (isEmptyLike(clinic)) return;
+        const coordinator = getPatientVal(pat, 'coordinator');
+        if (!clinicData[clinic]) clinicData[clinic] = { patientCount: 0, coordinators: new Set() };
+        clinicData[clinic].patientCount++;
+        if (!isEmptyLike(coordinator)) clinicData[clinic].coordinators.add(coordinator);
+    });
+    return Object.entries(clinicData)
+        .map(([clinic, data]) => {
+            const coordinatorCount = data.coordinators.size;
+            const avgLoad = coordinatorCount > 0 ? Math.round((data.patientCount / coordinatorCount) * 10) / 10 : null;
+            return { clinic, patientCount: data.patientCount, coordinatorCount, avgLoad };
+        })
+        .sort((a, b) => b.patientCount - a.patientCount);
+}
+
+// --- Snapshot History (Phase 3) ---
+function getTodayDateKey() {
+    const dt = new Date();
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function readSnapshotHistory() {
+    const raw = readStorage(STORAGE_KEYS.snapshotHistory);
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+        console.warn("Unable to parse snapshot history, resetting.", err);
+        return [];
+    }
+}
+
+// Keep active/pendingReferrals/ncmCount/activeBarriers counting logic in sync with calculateKPIs().
+function computeSnapshotSummary() {
+    let active = 0, pendingReferrals = 0, ncmCount = 0, activeBarriers = 0;
+    patientsData.forEach(pat => {
+        const status = normalizeValue(getPatientVal(pat, 'status'));
+        if (status === 'active' || status === 'نشط' || status === 'مستمر') active++;
+        if (isPendingValue(getPatientVal(pat, 'treatmentReferralStatus'))) pendingReferrals++;
+        if (isYesValue(getPatientVal(pat, 'ncm'))) ncmCount++;
+        if (hasActiveBarrier(pat)) activeBarriers++;
+    });
+    return {
+        total: patientsData.length,
+        active,
+        pendingReferrals,
+        ncmCount,
+        activeBarriers,
+        dataCompleteness: computeAvgCompleteness(),
+        avgTurnaround: computeAvgTurnaroundDays()
+    };
+}
+
+function recordSnapshot() {
+    const history = readSnapshotHistory();
+    const todayKey = getTodayDateKey();
+    const newEntry = {
+        date: todayKey,
+        timestamp: new Date().toLocaleString("en-US", { hour12: true }),
+        summary: computeSnapshotSummary()
+    };
+
+    const existingIdx = history.findIndex(e => e.date === todayKey);
+    if (existingIdx !== -1) {
+        history[existingIdx] = newEntry;
+    } else {
+        history.push(newEntry);
+    }
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
+    const trimmed = history.filter(e => e.date >= cutoffKey).sort((a, b) => a.date.localeCompare(b.date));
+
+    writeStorage(STORAGE_KEYS.snapshotHistory, JSON.stringify(trimmed));
 }
 
 function hasActiveBarrier(pat) {
@@ -452,6 +602,24 @@ function matchesPatientQuickFilter(pat, filterName) {
     if (filterName === 'data-problems') {
         return getDataProblems(pat).length > 0;
     }
+    if (filterName === 'data-incomplete') {
+        return getPatientCompleteness(pat) < 100;
+    }
+    if (filterName === 'aging-0-3') {
+        return matchesAgingBucket(pat, '0-3');
+    }
+    if (filterName === 'aging-4-7') {
+        return matchesAgingBucket(pat, '4-7');
+    }
+    if (filterName === 'aging-8-14') {
+        return matchesAgingBucket(pat, '8-14');
+    }
+    if (filterName === 'aging-15-plus') {
+        return matchesAgingBucket(pat, '15+');
+    }
+    if (filterName === 'not-closed') {
+        return !isClosedCase(pat);
+    }
     return true;
 }
 
@@ -675,6 +843,54 @@ function setupInteractiveKPIs() {
     });
 }
 
+function renderOperationalKPIs() {
+    const completenessVal = document.getElementById("okpi-completeness-val");
+    if (completenessVal) completenessVal.innerText = `${computeAvgCompleteness()}%`;
+
+    const turnaroundVal = document.getElementById("okpi-turnaround-val");
+    if (turnaroundVal) {
+        const avgTurnaround = computeAvgTurnaroundDays();
+        turnaroundVal.innerText = avgTurnaround === null ? "—" : `${avgTurnaround}d`;
+    }
+
+    const bucketCounts = { '0-3': 0, '4-7': 0, '8-14': 0, '15+': 0 };
+    patientsData.forEach(pat => {
+        const bucket = getAgingBucket(getPatientAgingDays(pat));
+        if (bucket) bucketCounts[bucket]++;
+    });
+
+    const bucketElIds = {
+        '0-3': 'okpi-aging-0-3-val',
+        '4-7': 'okpi-aging-4-7-val',
+        '8-14': 'okpi-aging-8-14-val',
+        '15+': 'okpi-aging-15-plus-val'
+    };
+    for (const [bucket, elId] of Object.entries(bucketElIds)) {
+        const el = document.getElementById(elId);
+        if (el) el.innerText = bucketCounts[bucket];
+    }
+}
+
+function setupOperationalKPIClicks() {
+    const wireCard = (elId, filters) => {
+        const card = document.getElementById(elId);
+        if (!card) return;
+        card.addEventListener("click", () => {
+            setQuickFilters(filters);
+            pagination.currentPage = 1;
+            applyFilters();
+            switchToMasterTab();
+        });
+    };
+
+    wireCard("okpi-completeness", ["data-incomplete"]);
+    wireCard("okpi-turnaround", ["chemo-scheduled"]);
+    wireCard("okpi-aging-0-3", ["aging-0-3"]);
+    wireCard("okpi-aging-4-7", ["aging-4-7"]);
+    wireCard("okpi-aging-8-14", ["aging-8-14"]);
+    wireCard("okpi-aging-15-plus", ["aging-15-plus"]);
+}
+
 
 // --- App Initialization ---
 document.addEventListener("DOMContentLoaded", () => {
@@ -688,6 +904,7 @@ function initApp() {
     setupSyncButton();
     setupFilterListeners();
     setupInteractiveKPIs();
+    setupOperationalKPIClicks();
     setupPagination();
     setupExportButton();
     setupDrawerClose();
@@ -701,6 +918,7 @@ function initApp() {
     setupSidebarToggle();
 
     setupResetCache();
+    setupDailyDigestButton();
     if (dependenciesReady) {
         loadDashboardData({ silent: true });
     } else {
@@ -789,6 +1007,7 @@ function setupTabSwitching() {
     navItems.forEach(item => {
         item.addEventListener("click", () => {
             const targetTab = item.getAttribute("data-tab");
+            if (!targetTab) return;
 
             navItems.forEach(i => { i.classList.remove("active"); i.removeAttribute("aria-current"); });
             tabPanes.forEach(p => p.classList.remove("active"));
@@ -821,6 +1040,8 @@ function setupTabSwitching() {
                 renderAnalyticsTab();
             } else if (targetTab === 'workflow') {
                 renderWorkflowTab();
+            } else if (targetTab === 'capacity') {
+                renderWorkloadCapacityTab();
             }
         });
     });
@@ -833,10 +1054,89 @@ function setupResetCache() {
             const confirmed = window.confirm("Clear all locally cached dashboard data from this browser?");
             if (!confirmed) return;
             removeStorage(STORAGE_KEYS.data);
+            removeStorage(STORAGE_KEYS.snapshotHistory);
             showToast("Cache cleared! Reloading dashboard...", "info");
             setTimeout(() => { window.location.reload(); }, 1000);
         });
     }
+}
+
+function setupDailyDigestButton() {
+    const btn = document.getElementById("nav-daily-digest");
+    if (btn) btn.addEventListener("click", generateDailyDigest);
+}
+
+function generateDailyDigest() {
+    const ACTION_LISTS = ['A','B','C','D','E','F','G','H','I','L'];
+    const byCoordinator = {};
+    patientsData.forEach(pat => {
+        if (isClosedCase(pat)) return;
+        const lists = [...getPatientWorkflowLists(pat)].filter(id => ACTION_LISTS.includes(id));
+        if (lists.length === 0) return;
+        const coordinator = getPatientVal(pat, 'coordinator') || 'Unassigned';
+        if (!byCoordinator[coordinator]) byCoordinator[coordinator] = [];
+        byCoordinator[coordinator].push({ pat, lists });
+    });
+
+    const coordinatorNames = Object.keys(byCoordinator).sort((a, b) => byCoordinator[b].length - byCoordinator[a].length);
+    if (coordinatorNames.length === 0) {
+        showToast("No action items to report today.", "info");
+        return;
+    }
+    const totalItems = coordinatorNames.reduce((sum, c) => sum + byCoordinator[c].length, 0);
+
+    let bodyHtml = '';
+    coordinatorNames.forEach(coordinator => {
+        const items = byCoordinator[coordinator];
+        bodyHtml += `<h2>${escapeHTML(coordinator)} (${items.length} item${items.length !== 1 ? 's' : ''})</h2><table><thead><tr><th>Patient Name</th><th>ID</th><th>Clinic</th><th>Action Needed</th></tr></thead><tbody>`;
+        items.forEach(({ pat, lists }) => {
+            const labels = lists.map(id => escapeHTML(WORKFLOW_LISTS[id].title)).join('<br>');
+            bodyHtml += `<tr><td>${getEscapedPatientVal(pat, 'name')}</td><td>${getEscapedPatientVal(pat, 'id')}</td><td>${getEscapedPatientVal(pat, 'clinic')}</td><td>${labels}</td></tr>`;
+        });
+        bodyHtml += `</tbody></table>`;
+    });
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+        showToast("Error: Popup blocked! Please allow popups for this site.", "error");
+        return;
+    }
+
+    const dateStr = new Date().toLocaleString();
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Daily Digest</title>
+        <style>
+            @page { size: landscape; margin: 12mm 15mm; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #222222; background: #ffffff; margin: 0; padding: 10px; font-size: 9.5pt; }
+            h1 { font-size: 20pt; margin: 0 0 4px 0; color: #1e3a8a; font-weight: 700; }
+            .meta { font-size: 10pt; color: #555555; margin-bottom: 10px; }
+            h2 { font-size: 13pt; color: #1e3a8a; margin-top: 24px; border-bottom: 1px solid #cccccc; padding-bottom: 4px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th, td { border: 1px solid #cccccc; padding: 6px 8px; text-align: left; vertical-align: top; }
+            th { background-color: #f3f4f6; color: #1f2937; font-weight: 700; }
+        </style>
+    </head>
+    <body>
+        <h1>Daily Digest</h1>
+        <p class="meta">${dateStr} — ${totalItems} action item${totalItems !== 1 ? 's' : ''} across ${coordinatorNames.length} coordinator${coordinatorNames.length !== 1 ? 's' : ''}</p>
+        ${bodyHtml}
+        <script>
+            window.onload = function() {
+                window.print();
+                setTimeout(function() { window.close(); }, 500);
+            };
+        <\/script>
+    </body>
+    </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
 }
 
 function setSyncStepState(stepEl, state, html) {
@@ -877,6 +1177,7 @@ function applyDashboardData(patients, lists, metadata, options = {}) {
         }
     };
     writeStorage(STORAGE_KEYS.data, JSON.stringify(cachedData));
+    recordSnapshot();
 
     const initialOverlay = document.getElementById("initial-load-overlay");
     if (initialOverlay) initialOverlay.classList.add("hidden");
@@ -1223,6 +1524,40 @@ function calculateKPIs() {
     document.getElementById("kpi-active-barriers").innerText = activeBarriers;
     updateMasterFunnel();
     updateTriageBanner(activeBarriers, missingChemo, pendingReferrals, ncmCount);
+    renderOperationalKPIs();
+    renderTrendsSummary();
+}
+
+function renderTrendsSummary() {
+    const el = document.getElementById('trends-delta-summary');
+    if (!el) return;
+
+    const history = readSnapshotHistory();
+    if (history.length === 0) {
+        el.innerText = "No snapshot history yet — upload a tracker file to start tracking trends.";
+        return;
+    }
+    if (history.length === 1) {
+        el.innerText = `First recorded snapshot (${history[0].date}). Trends will appear after your next upload.`;
+        return;
+    }
+
+    const latest = history[history.length - 1];
+    const previous = history[history.length - 2];
+    const diffTotal = latest.summary.total - previous.summary.total;
+    const diffBarriers = latest.summary.activeBarriers - previous.summary.activeBarriers;
+    const diffPending = latest.summary.pendingReferrals - previous.summary.pendingReferrals;
+
+    const parts = [];
+    if (diffTotal !== 0) parts.push(`${diffTotal > 0 ? '+' : ''}${diffTotal} patients`);
+    if (diffBarriers !== 0) parts.push(`${diffBarriers > 0 ? '+' : ''}${diffBarriers} barriers`);
+    if (diffPending !== 0) parts.push(`${diffPending > 0 ? '+' : ''}${diffPending} pending referrals`);
+
+    if (parts.length === 0) {
+        el.innerText = `Since last upload (${latest.date}): no change.`;
+    } else {
+        el.innerText = `Since last upload (${latest.date}): ${parts.join(', ')}.`;
+    }
 }
 
 function updateTriageBanner(barriers, missingChemo, pendingReferrals, ncmCount) {
@@ -1375,7 +1710,8 @@ function setupFilterListeners() {
             renderBarriersTab();
             renderAnalyticsTab();
             renderWorkflowTab();
-            
+            renderWorkloadCapacityTab();
+
             showToast("Filters cleared and reset", "info");
         });
     }
@@ -2174,6 +2510,35 @@ function renderCharts() {
             }
         }
     });
+
+    // Chart 5: Trends (Last 90 Days) — Total Patients, Active Barriers, Pending Referrals
+    const trendsCanvas = document.getElementById('chart-trends');
+    const history = readSnapshotHistory();
+    if (trendsCanvas && history.length > 0) {
+        const ctxTrends = trendsCanvas.getContext('2d');
+        charts.trends = new Chart(ctxTrends, {
+            type: 'line',
+            data: {
+                labels: history.map(e => e.date),
+                datasets: [
+                    { label: 'Total Patients', data: history.map(e => e.summary.total), borderColor: '#3b82f6', tension: 0.3 },
+                    { label: 'Active Barriers', data: history.map(e => e.summary.activeBarriers), borderColor: '#ef4444', tension: 0.3 },
+                    { label: 'Pending Referrals', data: history.map(e => e.summary.pendingReferrals), borderColor: '#f59e0b', tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: gridColor }, ticks: { color: textColor } },
+                    y: { grid: { color: gridColor }, ticks: { color: textColor } }
+                },
+                plugins: {
+                    legend: { labels: { color: textColor } }
+                }
+            }
+        });
+    }
 }
 
 function updateChartsTheme() {
@@ -4184,6 +4549,57 @@ function renderWorkflowTab() {
     for (const id of 'ABCDEFGHIJKL') {
         const el = document.getElementById(`wkpi-val-${id}`);
         if (el) el.innerText = (counts[id] || []).length;
+    }
+}
+
+// --- Workload & Capacity Tab ---
+
+function jumpToMasterFilteredBy(dropdownId, value) {
+    document.getElementById('master-search-input').value = '';
+    document.getElementById('filter-clinic').value = '';
+    document.getElementById('filter-division').value = '';
+    document.getElementById('filter-coordinator').value = '';
+    document.getElementById('filter-status').value = '';
+    setQuickFilters(['not-closed']);
+    clearActiveColumnFilters();
+    document.getElementById(dropdownId).value = value;
+    pagination.currentPage = 1;
+    applyFilters();
+    switchToMasterTab();
+}
+
+function renderWorkloadCapacityTab() {
+    const coordinatorBody = document.getElementById('coordinator-workload-table-body');
+    const clinicBody = document.getElementById('clinic-load-table-body');
+    if (!coordinatorBody || !clinicBody) return;
+
+    const coordinatorWorkload = computeCoordinatorWorkload();
+    coordinatorBody.innerHTML = '';
+    if (coordinatorWorkload.length === 0) {
+        coordinatorBody.innerHTML = `<tr><td colspan="2"><div class="table-empty-state"><i class="fa-solid fa-users"></i><h4>No active coordinator workload</h4><p>No active (non-closed) patients have a coordinator assigned yet.</p></div></td></tr>`;
+    } else {
+        coordinatorWorkload.forEach(entry => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td>${escapeHTML(entry.coordinator)}</td><td>${entry.count}</td>`;
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', () => jumpToMasterFilteredBy('filter-coordinator', entry.coordinator));
+            coordinatorBody.appendChild(row);
+        });
+    }
+
+    const clinicLoadBalance = computeClinicLoadBalance();
+    clinicBody.innerHTML = '';
+    if (clinicLoadBalance.length === 0) {
+        clinicBody.innerHTML = `<tr><td colspan="4"><div class="table-empty-state"><i class="fa-solid fa-hospital"></i><h4>No active clinic load data</h4><p>No active (non-closed) patients have a clinic assigned yet.</p></div></td></tr>`;
+    } else {
+        clinicLoadBalance.forEach(entry => {
+            const row = document.createElement('tr');
+            const avgLoadDisplay = entry.avgLoad === null ? '—' : entry.avgLoad;
+            row.innerHTML = `<td>${escapeHTML(entry.clinic)}</td><td>${entry.patientCount}</td><td>${entry.coordinatorCount}</td><td>${avgLoadDisplay}</td>`;
+            row.style.cursor = 'pointer';
+            row.addEventListener('click', () => jumpToMasterFilteredBy('filter-clinic', entry.clinic));
+            clinicBody.appendChild(row);
+        });
     }
 }
 

@@ -85,12 +85,20 @@
                         <span>Workflow Follow-up</span>
                         <span class="badge badge-danger" id="badge-workflow">0</span>
                     </button>
+                    <button class="nav-item" data-tab="capacity" id="nav-capacity">
+                        <i class="fa-solid fa-scale-balanced"></i>
+                        <span>Workload & Capacity</span>
+                    </button>
                 </div>
                 <div class="nav-group">
                     <span class="nav-group-label">System</span>
                     <button class="nav-item" data-tab="settings" id="nav-settings">
                         <i class="fa-solid fa-gear"></i>
                         <span>Sync Settings</span>
+                    </button>
+                    <button class="nav-item" id="nav-daily-digest">
+                        <i class="fa-solid fa-file-lines"></i>
+                        <span>Daily Digest</span>
                     </button>
                 </div>
             </nav>
@@ -250,6 +258,72 @@
                                 <p class="kpi-value" id="kpi-active-barriers">0</p>
                                 <span class="kpi-context">Escalate first</span>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Operational KPIs (Phase 1) -->
+                    <div class="dashboard-section-header">
+                        <h3>Operational KPIs</h3>
+                    </div>
+                    <div class="kpi-grid" id="operational-kpi-grid">
+                        <div class="kpi-card glass-card ripple" id="okpi-completeness">
+                            <div class="kpi-icon icon-blue"><i class="fa-solid fa-list-check"></i></div>
+                            <div class="kpi-data">
+                                <h3>Data Completeness</h3>
+                                <p class="kpi-value" id="okpi-completeness-val">0%</p>
+                                <span class="kpi-context">Avg. across active files</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple" id="okpi-turnaround">
+                            <div class="kpi-icon icon-indigo"><i class="fa-solid fa-hourglass-half"></i></div>
+                            <div class="kpi-data">
+                                <h3>Avg. Referral Turnaround</h3>
+                                <p class="kpi-value" id="okpi-turnaround-val">—</p>
+                                <span class="kpi-context">Visit → Chemo, days</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple" id="okpi-aging-0-3">
+                            <div class="kpi-icon icon-green"><i class="fa-solid fa-hourglass-start"></i></div>
+                            <div class="kpi-data">
+                                <h3>Aging: 0-3 days</h3>
+                                <p class="kpi-value" id="okpi-aging-0-3-val">0</p>
+                                <span class="kpi-context">Since clinic visit</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple" id="okpi-aging-4-7">
+                            <div class="kpi-icon icon-blue"><i class="fa-solid fa-hourglass-half"></i></div>
+                            <div class="kpi-data">
+                                <h3>Aging: 4-7 days</h3>
+                                <p class="kpi-value" id="okpi-aging-4-7-val">0</p>
+                                <span class="kpi-context">Since clinic visit</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple" id="okpi-aging-8-14">
+                            <div class="kpi-icon icon-amber"><i class="fa-solid fa-hourglass-end"></i></div>
+                            <div class="kpi-data">
+                                <h3>Aging: 8-14 days</h3>
+                                <p class="kpi-value" id="okpi-aging-8-14-val">0</p>
+                                <span class="kpi-context">Since clinic visit</span>
+                            </div>
+                        </div>
+                        <div class="kpi-card glass-card ripple" id="okpi-aging-15-plus">
+                            <div class="kpi-icon icon-danger"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div class="kpi-data">
+                                <h3>Aging: 15+ days</h3>
+                                <p class="kpi-value" id="okpi-aging-15-plus-val">0</p>
+                                <span class="kpi-context">Since clinic visit</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trends (Phase 3) -->
+                    <div class="dashboard-section-header">
+                        <h3>Trends (Last 90 Days)</h3>
+                    </div>
+                    <div class="dashboard-card glass-card">
+                        <p id="trends-delta-summary" class="kpi-context"></p>
+                        <div class="chart-container">
+                            <canvas id="chart-trends" role="img" aria-label="Line chart: patient totals, barriers, and pending referrals over the last 90 days"></canvas>
                         </div>
                     </div>
 
@@ -893,6 +967,50 @@
 
                     </div>
 
+                </section>
+
+                <!-- 11. WORKLOAD & CAPACITY TAB -->
+                <section class="tab-pane" id="tab-capacity">
+                    <div class="table-container glass-card">
+                        <div class="card-header border-none padding-bottom-none">
+                            <h3>Coordinator Workload</h3>
+                        </div>
+                        <div class="responsive-table-wrapper margin-top-20">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Coordinator</th>
+                                        <th>Total Active Patients</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="coordinator-workload-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="table-container glass-card margin-top-20">
+                        <div class="card-header border-none padding-bottom-none">
+                            <h3>Clinic Load Balance</h3>
+                        </div>
+                        <p class="settings-desc margin-top-15">Coordinators are counted from who appears in each clinic's records, not an official staffing roster.</p>
+                        <div class="responsive-table-wrapper margin-top-20">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Clinic</th>
+                                        <th>Total Active Patients</th>
+                                        <th>Coordinators (data-derived)</th>
+                                        <th>Avg. Load / Coordinator</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="clinic-load-table-body">
+                                    <!-- Dynamic content -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- 10. SETTINGS TAB -->
