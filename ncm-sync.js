@@ -10,8 +10,8 @@
  */
 
 const NCM_CONFIG = {
-    apiUrl: "",          // e.g. "https://script.google.com/macros/s/AKfycb.../exec"
-    token: "",           // must match the SHARED_TOKEN script property on the backend
+    apiUrl: "https://script.google.com/macros/s/AKfycbwYccSeAGeqUZRlP5Kqo3ZF4M1fKh0WEHYM_WEhnOqg8h83kMsmd_Dn9zFsDfXKkt6R/exec",
+    token: "",           // must match the SHARED_TOKEN script property on the backend, if one is set (currently unset)
     pollIntervalMs: 15000
 };
 
@@ -108,7 +108,7 @@ function ncmApiList() { return ncmGet("list"); }
 function ncmApiGet(patientKey) { return ncmGet("get", { patientKey }); }
 function ncmApiChanges(since) { return ncmGet("changes", { since }); }
 function ncmApiImport(patient, user, role) { return ncmPost("import", { patient, user, role }); }
-function ncmApiCreateManual(patient, user, role) { return ncmPost("createManual", { patient, user, role }); }
+function ncmApiCreateManual(patientKey, patient, user, role) { return ncmPost("createManual", { patientKey, patient, user, role }); }
 function ncmApiLink(patientKey, patient, user, role) { return ncmPost("link", { patientKey, patient, user, role }); }
 function ncmApiUpdateShared(patientKey, fields, user, role) { return ncmPost("updateShared", { patientKey, fields, user, role }); }
 function ncmApiUpdateCoordinator(patientKey, fields, expectedVersion, user) {
@@ -159,7 +159,7 @@ function ncmDispatchMutation_(entry) {
     const p = entry.payload;
     switch (entry.action) {
         case "import": return ncmApiImport(p.patient, p.user, p.role);
-        case "createManual": return ncmApiCreateManual(p.patient, p.user, p.role);
+        case "createManual": return ncmApiCreateManual(p.patientKey, p.patient, p.user, p.role);
         case "link": return ncmApiLink(p.patientKey, p.patient, p.user, p.role);
         case "updateShared": return ncmApiUpdateShared(p.patientKey, p.fields, p.user, p.role);
         case "updateCoordinator": return ncmApiUpdateCoordinator(p.patientKey, p.fields, p.expectedVersion, p.user);

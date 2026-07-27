@@ -307,9 +307,23 @@ function actionCreateManual_(params) {
   var patient = params.patient || {};
   if (!patient.patientName) return { success: false, error: "patientName is required." };
 
-  var patientKey = "manual-" + Utilities.getUuid();
+  // Prefer the client-generated key (created at local-save time, before any network round trip)
+  // so the local record and the server row stay the same entity. Only generate a fresh one if the
+  // client didn't supply one (e.g. a direct API call).
+  var patientKey = params.patientKey || ("manual-" + Utilities.getUuid());
   var sheet = getNcmSheet_();
   var colMap = getColumnMap_(sheet);
+
+  // Idempotency: if this exact key already exists (e.g. the outbox retried after a dropped
+  // response, even though the first attempt actually succeeded), return the existing row instead
+  // of appending a duplicate.
+  var existingRowIndex = findRowIndexByPatientKey_(sheet, colMap, patientKey);
+  if (existingRowIndex !== -1) {
+    var existingLastCol = sheet.getLastColumn();
+    var existingRowValues = sheet.getRange(existingRowIndex, 1, 1, existingLastCol).getValues()[0];
+    return { success: true, existed: true, data: rowToObject_(sheet, colMap, existingRowValues) };
+  }
+
   var now = new Date().toISOString();
   var newRow = {
     patientKey: patientKey,

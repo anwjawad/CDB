@@ -205,7 +205,7 @@ function ncmImportPatient(pat, user) {
     record.createdBy = user ? user.name : "";
     ncmUpsertLocalPatient(record);
     ncmSetSyncStatus(patientKey, "pending");
-    ncmQueueMutation("import", { patient: snapshot, user: user ? user.name : "", role: user ? user.role : "" });
+    ncmQueueMutation("import", { patientKey, patient: snapshot, user: user ? user.name : "", role: user ? user.role : "" });
     showToast(`${patientName} imported to NCM.`, "success");
     ncmTriggerBackgroundSync();
     return { patientKey, created: true };
@@ -235,6 +235,7 @@ function ncmCreateManualPatient(fields, user) {
     ncmUpsertLocalPatient(record);
     ncmSetSyncStatus(patientKey, "pending");
     ncmQueueMutation("createManual", {
+        patientKey,
         patient: { patientName: snapshot.patientName, patientFile: snapshot.patientFile, patientId: snapshot.patientId, primaryPhysician: snapshot.primaryPhysician, treatmentPlan: snapshot.sharedTreatmentPlan, notes: snapshot.sharedNotes, briefHistory: snapshot.coordinatorBriefHistory },
         user: user ? user.name : "", role: user ? user.role : ""
     });
