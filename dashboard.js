@@ -1630,13 +1630,16 @@ function setupFilterListeners() {
     const filterDivision = document.getElementById("filter-division");
     const filterCoordinator = document.getElementById("filter-coordinator");
     const filterStatus = document.getElementById("filter-status");
+    const filterVisitDateFrom = document.getElementById("filter-visit-date-from");
+    const filterVisitDateTo = document.getElementById("filter-visit-date-to");
+    const visitDateTodayBtn = document.getElementById("filter-visit-date-today-btn");
     const clearBtn = document.getElementById("clear-filters-btn");
     const columnFieldSelect = document.getElementById("column-filter-field");
     const addColumnFilterBtn = document.getElementById("add-column-filter-btn");
     const activeColumnFiltersEl = document.getElementById("active-column-filters");
-    
-    const elements = [searchInput, filterClinic, filterDivision, filterCoordinator, filterStatus];
-    
+
+    const elements = [searchInput, filterClinic, filterDivision, filterCoordinator, filterStatus, filterVisitDateFrom, filterVisitDateTo];
+
     elements.forEach(el => {
         if (el) {
             el.addEventListener("input", () => {
@@ -1645,6 +1648,16 @@ function setupFilterListeners() {
             });
         }
     });
+
+    if (visitDateTodayBtn) {
+        visitDateTodayBtn.addEventListener("click", () => {
+            const todayStr = getTodayDateKey();
+            if (filterVisitDateFrom) filterVisitDateFrom.value = todayStr;
+            if (filterVisitDateTo) filterVisitDateTo.value = todayStr;
+            pagination.currentPage = 1;
+            applyFilters();
+        });
+    }
 
     // Quick filter pills listener
     const pillBtns = document.querySelectorAll(".pill-btn");
@@ -1685,7 +1698,9 @@ function setupFilterListeners() {
             filterDivision.value = "";
             filterCoordinator.value = "";
             filterStatus.value = "";
-            
+            if (filterVisitDateFrom) filterVisitDateFrom.value = "";
+            if (filterVisitDateTo) filterVisitDateTo.value = "";
+
             // Clear tab-specific searches
             document.querySelectorAll(".table-actions input[type='text'], .filter-bar input[type='text']").forEach(inp => inp.value = "");
             
@@ -1752,7 +1767,9 @@ function applyFilters() {
     const divisionVal = document.getElementById("filter-division").value;
     const coordinatorVal = document.getElementById("filter-coordinator").value;
     const statusVal = document.getElementById("filter-status").value;
-    
+    const visitDateFromVal = document.getElementById("filter-visit-date-from").value;
+    const visitDateToVal = document.getElementById("filter-visit-date-to").value;
+
     filteredPatients = patientsData.filter(pat => {
         const name = getPatientVal(pat, 'name').toLowerCase();
         const id = getPatientVal(pat, 'id').toLowerCase();
@@ -1761,21 +1778,26 @@ function applyFilters() {
         const division = getPatientVal(pat, 'division');
         const coordinator = getPatientVal(pat, 'coordinator');
         const status = getPatientVal(pat, 'status');
-        
+        const visitDate = getPatientVal(pat, 'visitDate');
+
         // Search term check
         const matchesSearch = name.includes(searchQuery) || id.includes(searchQuery) || file.includes(searchQuery);
-        
+
         // Filters check
         const matchesClinic = !clinicVal || clinic === clinicVal;
         const matchesDivision = !divisionVal || division === divisionVal;
         const matchesCoordinator = !coordinatorVal || coordinator === coordinatorVal;
         const matchesStatus = !statusVal || status === statusVal;
-        
+        const matchesVisitDate = (!visitDateFromVal && !visitDateToVal) ||
+            (isValidDateValue(visitDate) &&
+                (!visitDateFromVal || visitDate >= visitDateFromVal) &&
+                (!visitDateToVal || visitDate <= visitDateToVal));
+
         // Quick filters combine with AND logic when more than one pill is selected.
         const matchesQuickFilter = matchesSelectedQuickFilters(pat);
         const matchesColumnFilters = matchesActiveColumnFilters(pat);
-        
-        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesQuickFilter && matchesColumnFilters;
+
+        return matchesSearch && matchesClinic && matchesDivision && matchesCoordinator && matchesStatus && matchesVisitDate && matchesQuickFilter && matchesColumnFilters;
     });
 
     // Apply Sorting
