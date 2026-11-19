@@ -1375,64 +1375,102 @@ function ncmGetTodaysPatients() {
 }
 
 const NCM_DOC_STYLE = `
-    @page { size: portrait; margin: 15mm; }
+    @page { size: landscape; margin: 10mm; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2937; background: #ffffff; margin: 0; padding: 0; font-size: 10.5pt; line-height: 1.5; }
     .ncm-doc-header { border-bottom: 2px solid #1e3a8a; padding-bottom: 10px; margin-bottom: 18px; }
     .ncm-doc-header h1 { font-size: 18pt; color: #1e3a8a; margin: 0 0 4px 0; }
     .ncm-doc-header p { margin: 0; font-size: 10pt; color: #555555; }
-    .ncm-doc-patient { border: 1px solid #cccccc; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px; page-break-inside: avoid; }
-    .ncm-doc-identity { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-    .ncm-doc-num { width: 26px; height: 26px; background: #1e3a8a; color: #ffffff; border-radius: 50%; text-align: center; vertical-align: middle; font-weight: 700; font-size: 10pt; }
-    .ncm-doc-name { font-size: 13pt; font-weight: 700; color: #111827; }
-    .ncm-doc-badge { display: inline-block; font-size: 8pt; font-weight: 700; color: #92400e; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
-    .ncm-doc-meta { font-size: 9.5pt; color: #555555; margin-top: 2px; }
-    .ncm-doc-compare { width: 100%; border-collapse: collapse; margin-top: 6px; }
-    .ncm-doc-compare th { background: #f3f4f6; color: #1f2937; font-size: 9.5pt; padding: 5px 8px; border: 1px solid #dddddd; text-align: left; width: 50%; }
-    .ncm-doc-compare td { border: 1px solid #dddddd; padding: 6px 8px; font-size: 9.5pt; vertical-align: top; width: 50%; }
-    .ncm-doc-shared { width: 100%; border-collapse: collapse; margin-top: 8px; background: #f9fafb; }
-    .ncm-doc-shared td { padding: 5px 8px; font-size: 9.5pt; border-top: 1px dashed #dddddd; }
+    .ncm-doc-table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+    .ncm-doc-table thead { display: table-header-group; }
+    .ncm-doc-table th { background: #f1f2f4; color: #111111; font-weight: 700; text-align: left; padding: 5px 7px; border: 1px solid #9ca3af; }
+    .ncm-doc-table td { padding: 5px 7px; border: 1px solid #9ca3af; vertical-align: top; white-space: pre-line; color: #111111; }
+    .ncm-doc-table tr { page-break-inside: avoid; }
+    .ncm-doc-table .col-num { width: 26px; text-align: center; color: #555555; }
+    .ncm-doc-table .col-patient { width: 13%; }
+    .ncm-doc-table .col-file { width: 8%; }
+    .ncm-doc-table .col-history { width: 30%; }
+    .ncm-doc-table .col-plan { width: 26%; }
+    .ncm-doc-table .col-doctor { width: 8%; }
+    .ncm-doc-table .col-status { width: 11%; }
+    .ncm-doc-status-ok { color: #166534; }
+    .ncm-doc-status-missing { color: #b91c1c; font-weight: 600; }
     .ncm-doc-footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #dddddd; font-size: 8pt; color: #777777; display: flex; justify-content: space-between; }
 `;
 
 function ncmBuildTodaysListContentHtml_(patients) {
     const todayDisplay = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    let body = "";
-    patients.forEach((r, idx) => {
-        const hasShared = r.sharedTreatmentPlan || r.sharedNotes || r.caseStatus || r.barrier;
-        body += `
-        <div class="ncm-doc-patient">
-            <table class="ncm-doc-identity">
-                <tr>
-                    <td class="ncm-doc-num">${idx + 1}</td>
-                    <td>
-                        <div class="ncm-doc-name">${escapeHTML(r.patientName || "Unnamed")}${!r.masterLinked ? ' <span class="ncm-doc-badge">NCM Only</span>' : ""}</div>
-                        <div class="ncm-doc-meta">File ${escapeHTML(r.patientFile || "-")} &bull; ID ${escapeHTML(r.patientId || "-")}${r.diagnosis ? " &bull; " + escapeHTML(r.diagnosis) : ""}${r.primaryPhysician ? " &bull; " + escapeHTML(r.primaryPhysician) : ""}</div>
-                    </td>
-                </tr>
-            </table>
-            <table class="ncm-doc-compare">
-                <thead><tr><th>Coordinator</th><th>Resident</th></tr></thead>
-                <tbody>
-                    <tr><td>${escapeHTML(r.coordinatorBriefHistory || "-")}</td><td>${escapeHTML(r.residentBriefHistory || "-")}</td></tr>
-                    <tr><td><strong>Treatment Plan:</strong> ${escapeHTML(r.coordinatorTreatmentPlan || "-")}</td><td><strong>Treatment Plan:</strong> ${escapeHTML(r.residentTreatmentPlan || "-")}</td></tr>
-                    <tr><td><strong>Notes:</strong> ${escapeHTML(r.coordinatorNotes || "-")}</td><td><strong>Notes:</strong> ${escapeHTML(r.residentNotes || "-")}</td></tr>
-                </tbody>
-            </table>
-            ${hasShared ? `
-            <table class="ncm-doc-shared">
-                <tr><td><strong>Shared Treatment Plan:</strong> ${escapeHTML(r.sharedTreatmentPlan || "-")}</td></tr>
-                <tr><td><strong>Shared Notes:</strong> ${escapeHTML(r.sharedNotes || "-")}</td></tr>
-                <tr><td><strong>Case Status:</strong> ${escapeHTML(r.caseStatus || "-")}${r.barrier ? "&nbsp;&nbsp;&nbsp;<strong>Barrier:</strong> " + escapeHTML(r.barrier) : ""}</td></tr>
-            </table>` : ""}
-        </div>`;
-    });
+    // One compact row per patient, grouped by doctor (in the order they were added within each doctor).
+    const sorted = patients.slice().sort((a, b) =>
+        ncmDocText_(a.primaryPhysician).localeCompare(ncmDocText_(b.primaryPhysician)) ||
+        (a.createdAt || "").localeCompare(b.createdAt || ""));
+
+    const rows = sorted.map((r, idx) => {
+        const row = ncmBuildDocRow_(r);
+        const statusHtml = row.missing.length === 0
+            ? `<span class="ncm-doc-status-ok">Ready &#10003;</span>`
+            : `<span class="ncm-doc-status-missing">Not ready: ${escapeHTML(row.missing.join(", "))}</span>`;
+        return `
+            <tr>
+                <td class="col-num">${idx + 1}</td>
+                <td>${escapeHTML(row.patient)}</td>
+                <td>${escapeHTML(row.file)}</td>
+                <td>${escapeHTML(row.history)}</td>
+                <td>${escapeHTML(row.plan)}</td>
+                <td>${escapeHTML(row.doctor)}</td>
+                <td>${statusHtml}</td>
+            </tr>`;
+    }).join("");
 
     return `
         <div class="ncm-doc-header">
             <h1>New Cases Meeting &mdash; Today's Discussion List</h1>
-            <p>${todayDisplay} &bull; ${patients.length} patient${patients.length !== 1 ? "s" : ""} discussed</p>
+            <p>${todayDisplay} &bull; ${patients.length} patient${patients.length !== 1 ? "s" : ""}</p>
         </div>
-        ${body}`;
+        <table class="ncm-doc-table">
+            <thead>
+                <tr>
+                    <th class="col-num">#</th>
+                    <th class="col-patient">Patient</th>
+                    <th class="col-file">File no.</th>
+                    <th class="col-history">Brief history</th>
+                    <th class="col-plan">Question / proposed plan</th>
+                    <th class="col-doctor">Doctor</th>
+                    <th class="col-status">Status</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+}
+
+function ncmDocText_(value) {
+    const text = String(value === undefined || value === null ? "" : value).trim();
+    return isEmptyLike(text) ? "" : text;
+}
+
+/** Picks the best available value for each printed column: resident's review first, then coordinator, then the Excel value. */
+function ncmBuildDocRow_(r) {
+    const pick = (...values) => {
+        for (const v of values) {
+            const text = ncmDocText_(v);
+            if (text) return text;
+        }
+        return "";
+    };
+    const fileNo = ncmDocText_(r.patientFile);
+    const nationalId = ncmDocText_(r.patientId);
+    const row = {
+        patient: pick(r.patientName),
+        file: fileNo || (nationalId ? `ID${nationalId}` : ""),
+        history: pick(r.residentBriefHistory, r.coordinatorBriefHistory, r.diagnosis),
+        plan: pick(r.residentTreatmentPlan, r.coordinatorTreatmentPlan, r.sharedTreatmentPlan),
+        doctor: pick(r.primaryPhysician)
+    };
+    row.missing = [];
+    if (!row.file) row.missing.push("File number");
+    if (!row.history) row.missing.push("Brief history");
+    if (!row.plan) row.missing.push("Plan");
+    if (!row.doctor) row.missing.push("Doctor");
+    return row;
 }
 
 function ncmPrintTodaysList() {
