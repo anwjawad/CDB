@@ -1446,6 +1446,9 @@ async function processUploadedExcel(file) {
             toastType: "success"
         });
         setSyncStepState(stepParse, "completed", '<i class="fa-solid fa-circle-check"></i> Dashboard updated');
+
+        // Copy any NEW patients (by File Number / ID) into OncoTracker in the background.
+        if (typeof runOncoTrackerExport === "function") runOncoTrackerExport(patients, file.name);
     } catch (err) {
         console.error("Excel parse error:", err);
         showToast("Failed to parse Excel file: " + err.message, "error");
