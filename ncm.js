@@ -1404,21 +1404,39 @@ function ncmBuildTodaysListContentHtml_(patients) {
         ncmDocText_(a.primaryPhysician).localeCompare(ncmDocText_(b.primaryPhysician)) ||
         (a.createdAt || "").localeCompare(b.createdAt || ""));
 
+    // Styles are inlined (not only in NCM_DOC_STYLE) and line breaks are real <br> tags so the
+    // same table renders identically in the browser print view AND in Microsoft Word, which
+    // ignores most class-based CSS and `white-space: pre-line`.
+    const CELL = "border:1px solid #9ca3af; padding:4pt 6pt; vertical-align:top; font-size:9.5pt; color:#111111;";
+    const HEAD = "border:1px solid #9ca3af; padding:4pt 6pt; vertical-align:top; font-size:9.5pt; font-weight:bold; color:#111111; background:#f1f2f4; text-align:left;";
+    const cellText = (text) => escapeHTML(text).replace(/\r?\n/g, "<br>");
+    const COLUMNS = [
+        ["#", "4%", "text-align:center;"],
+        ["Patient", "13%", ""],
+        ["File no.", "9%", ""],
+        ["Brief history", "28%", ""],
+        ["Question / proposed plan", "25%", ""],
+        ["Doctor", "9%", ""],
+        ["Status", "12%", ""]
+    ];
+
     const rows = sorted.map((r, idx) => {
         const row = ncmBuildDocRow_(r);
         const statusHtml = row.missing.length === 0
-            ? `<span class="ncm-doc-status-ok">Ready &#10003;</span>`
-            : `<span class="ncm-doc-status-missing">Not ready: ${escapeHTML(row.missing.join(", "))}</span>`;
+            ? `<span style="color:#166534;">Ready &#10003;</span>`
+            : `<span style="color:#b91c1c; font-weight:bold;">Not ready: ${escapeHTML(row.missing.join(", "))}</span>`;
+        const cells = [
+            String(idx + 1),
+            cellText(row.patient),
+            cellText(row.file),
+            cellText(row.history),
+            cellText(row.plan),
+            cellText(row.doctor),
+            statusHtml
+        ];
         return `
-            <tr>
-                <td class="col-num">${idx + 1}</td>
-                <td>${escapeHTML(row.patient)}</td>
-                <td>${escapeHTML(row.file)}</td>
-                <td>${escapeHTML(row.history)}</td>
-                <td>${escapeHTML(row.plan)}</td>
-                <td>${escapeHTML(row.doctor)}</td>
-                <td>${statusHtml}</td>
-            </tr>`;
+            <tr style="page-break-inside:avoid;">${cells.map((html, i) =>
+                `<td width="${COLUMNS[i][1]}" style="${CELL}${i === 0 ? " text-align:center; color:#555555;" : ""}">${html}</td>`).join("")}</tr>`;
     }).join("");
 
     return `
@@ -1426,17 +1444,10 @@ function ncmBuildTodaysListContentHtml_(patients) {
             <h1>New Cases Meeting &mdash; Today's Discussion List</h1>
             <p>${todayDisplay} &bull; ${patients.length} patient${patients.length !== 1 ? "s" : ""}</p>
         </div>
-        <table class="ncm-doc-table">
+        <table class="ncm-doc-table" width="100%" cellspacing="0" cellpadding="0" style="width:100%; border-collapse:collapse;">
             <thead>
-                <tr>
-                    <th class="col-num">#</th>
-                    <th class="col-patient">Patient</th>
-                    <th class="col-file">File no.</th>
-                    <th class="col-history">Brief history</th>
-                    <th class="col-plan">Question / proposed plan</th>
-                    <th class="col-doctor">Doctor</th>
-                    <th class="col-status">Status</th>
-                </tr>
+                <tr style="page-break-inside:avoid;">${COLUMNS.map(([label, width, extra]) =>
+                    `<th width="${width}" style="${HEAD}${extra}">${label}</th>`).join("")}</tr>
             </thead>
             <tbody>${rows}</tbody>
         </table>`;
@@ -1525,13 +1536,17 @@ function ncmExportTodaysListToWord() {
         <meta charset="UTF-8">
         <title>NCM Today's List</title>
         <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
-        <style>${NCM_DOC_STYLE}</style>
+        <style>${NCM_DOC_STYLE}
+            /* Word only understands landscape through a named section (A4 landscape, 10mm margins). */
+            @page NcmLandscape { size: 841.9pt 595.3pt; mso-page-orientation: landscape; margin: 28.35pt; }
+            div.NcmLandscape { page: NcmLandscape; }
+            body { font-family: Calibri, "Segoe UI", Arial, sans-serif; }
+        </style>
     </head>
     <body>
+        <div class="NcmLandscape">
         ${content}
-        <div class="ncm-doc-footer">
-            <span>OncoCoord &mdash; NCM Collaborative Workspace</span>
-            <span>Exported ${new Date().toLocaleString()}</span>
+        <p style="margin-top:12pt; font-size:8pt; color:#777777;">OncoCoord &mdash; NCM Collaborative Workspace &bull; Exported ${new Date().toLocaleString()}</p>
         </div>
     </body>
     </html>`;
