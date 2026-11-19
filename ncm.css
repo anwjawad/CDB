@@ -20,10 +20,105 @@
     flex-wrap: wrap;
     gap: 14px;
     padding: 14px 18px;
+    position: relative;
+    z-index: 30; /* keep the Master Registry search dropdown above the panels below */
 }
 
 .ncm-search-box {
-    flex: 0 0 280px;
+    flex: 0 0 340px;
+    position: relative;
+}
+
+.ncm-registry-results {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: min(540px, 90vw);
+    max-height: 420px;
+    overflow-y: auto;
+    z-index: 60;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--card-border);
+    background: var(--bg-sidebar);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ncm-registry-results.hidden {
+    display: none;
+}
+
+.ncm-registry-results-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    padding: 2px 4px 4px;
+}
+
+.ncm-registry-result {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 7px;
+    background: var(--surface-control);
+    border: 1px solid var(--card-border);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.ncm-registry-result:hover,
+.ncm-registry-result:focus {
+    border-color: var(--color-primary);
+    background: var(--color-primary-glow);
+    outline: none;
+}
+
+.ncm-registry-result-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.ncm-registry-result-info strong {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.ncm-registry-result-info span {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ncm-registry-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    margin-left: 6px;
+    border-radius: 999px;
+    color: var(--color-primary);
+    border: 1px solid var(--color-primary);
+}
+
+.ncm-registry-import-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .ncm-search-box { flex: 1 1 100%; }
+    .ncm-registry-results { width: 100%; }
 }
 
 .ncm-filter-chips {

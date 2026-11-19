@@ -1279,6 +1279,74 @@ function ncmRenderLinkResults(query) {
     });
 }
 
+// --- NCM search box: Master Registry lookup ---------------------------------------------------------
+// Typing in the NCM search box also searches the Master Registry (patientsData). Clicking a match
+// opens the full read-only patient file (Patient Details drawer, which has "Import to NCM");
+// each match also has a quick Import / Open button.
+
+function ncmHideRegistrySearchResults() {
+    const container = document.getElementById("ncm-registry-results");
+    if (container) container.classList.add("hidden");
+}
+
+function ncmRenderRegistrySearchResults(query) {
+    const container = document.getElementById("ncm-registry-results");
+    if (!container) return;
+    const q = normalizeValue(query);
+    if (!q) {
+        container.innerHTML = "";
+        container.classList.add("hidden");
+        return;
+    }
+    const LIMIT = 15;
+    const source = Array.isArray(patientsData) ? patientsData : [];
+    const matches = source.filter(pat =>
+        normalizeValue(getPatientVal(pat, "name")).includes(q) ||
+        normalizeValue(getPatientVal(pat, "id")).includes(q) ||
+        normalizeValue(getPatientVal(pat, "file")).includes(q)
+    ).slice(0, LIMIT);
+
+    const countText = `${matches.length}${matches.length === LIMIT ? "+" : ""} match${matches.length === 1 ? "" : "es"}`;
+    const header = `<div class="ncm-registry-results-header"><i class="fa-solid fa-database"></i> Master Registry &mdash; ${countText}</div>`;
+    if (matches.length === 0) {
+        container.innerHTML = header + `<div class="ncm-list-empty">No Master Registry patients match "${escapeHTML(query)}".</div>`;
+        container.classList.remove("hidden");
+        return;
+    }
+    container.innerHTML = header + matches.map((pat, i) => {
+        const inNcm = !!ncmFindExistingByMasterPatient(pat);
+        const diagnosis = getPatientVal(pat, "diagnosis");
+        return `
+        <div class="ncm-registry-result" data-idx="${i}" role="option" tabindex="0" title="Open full patient file">
+            <div class="ncm-registry-result-info">
+                <strong>${getEscapedPatientVal(pat, "name")}${inNcm ? ' <span class="ncm-registry-badge">In NCM</span>' : ""}</strong>
+                <span>File: ${getEscapedPatientVal(pat, "file", "-")} &bull; ID: ${getEscapedPatientVal(pat, "id", "-")}${isEmptyLike(diagnosis) ? "" : " &bull; " + escapeHTML(diagnosis)}</span>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm ncm-registry-import-btn" data-idx="${i}" title="${inNcm ? "Open in New Cases Meeting" : "Import to New Cases Meeting"}">
+                <i class="fa-solid ${inNcm ? "fa-arrow-right" : "fa-file-import"}"></i> ${inNcm ? "Open" : "Import"}
+            </button>
+        </div>`;
+    }).join("");
+    container.classList.remove("hidden");
+
+    container.querySelectorAll(".ncm-registry-result").forEach(el => {
+        const pat = matches[Number(el.dataset.idx)];
+        const openFile = () => {
+            ncmHideRegistrySearchResults();
+            openPatientDrawer(pat);
+        };
+        el.addEventListener("click", openFile);
+        el.addEventListener("keydown", (e) => { if (e.key === "Enter") openFile(); });
+    });
+    container.querySelectorAll(".ncm-registry-import-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            ncmHideRegistrySearchResults();
+            ncmHandleImportClick(matches[Number(btn.dataset.idx)]);
+        });
+    });
+}
+
 // --- Import entry points (called from Master Registry / Patient Details drawer) ---------------------------------------------------------
 
 function ncmHandleImportClick(pat) {
@@ -1485,6 +1553,15 @@ function setupNcmWorkspace() {
         searchInput.addEventListener("input", () => {
             ncmState.searchQuery = searchInput.value;
             ncmRenderList("coordinator");
+            ncmRenderRegistrySearchResults(searchInput.value);
+        });
+        searchInput.addEventListener("focus", () => ncmRenderRegistrySearchResults(searchInput.value));
+        searchInput.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") ncmHideRegistrySearchResults();
+        });
+        document.addEventListener("click", (e) => {
+            const box = searchInput.closest(".ncm-search-box");
+            if (box && !box.contains(e.target)) ncmHideRegistrySearchResults();
         });
     }
 
